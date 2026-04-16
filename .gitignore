@@ -1,0 +1,34 @@
+# =============================================================================
+# SoftConnect 2.0 — .gitignore
+# =============================================================================
+
+# Dependências
+node_modules/
+
+# Build
+dist/
+
+# Variáveis de ambiente — NUNCA commitar
+.env
+.env.local
+.env.*.local
+
+# Prisma — gerado automaticamente
+node_modules/.prisma/
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testes
+coverage/
