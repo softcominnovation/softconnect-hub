@@ -22,6 +22,9 @@ RUN npx prisma generate
 # Compila TypeScript → JavaScript (output em /app/dist)
 RUN npm run build
 
+# Remove devDependencies aqui no builder, onde o package.json está presente
+RUN npm prune --omit=dev && npm cache clean --force
+
 
 # --- Stage 2: Production ---
 FROM node:20-alpine AS production
@@ -36,10 +39,8 @@ COPY --from=builder /app/dist ./dist
 # Copia o schema Prisma + migrations (necessário para o migrate deploy)
 COPY --from=builder /app/prisma ./prisma
 
-# Copia o node_modules completo do builder e remove devDependencies em seguida.
-# Evita um segundo `npm ci` — mais rápido e menor no layer final.
+# Copia o node_modules já prunado do builder
 COPY --from=builder /app/node_modules ./node_modules
-RUN npm prune --omit=dev && npm cache clean --force
 
 # Segurança: não rodar como root
 USER node
