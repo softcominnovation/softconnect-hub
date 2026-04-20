@@ -1,0 +1,68 @@
+# =============================================================================
+# SoftConnect 2.0 — Docker Compose DESENVOLVIMENTO / HOMOLOGAÇÃO
+# Ambiente: dev-api.hub.softconnect.net.br
+# Deploy: Docker Swarm via Portainer (stack: softconnect-dev)
+# Trigger: GitHub Actions ao fazer push na branch `develop`
+# =============================================================================
+
+version: "3.8"
+
+services:
+  softconnect-dev:
+    # Tag :dev — publicada pelo GitHub Actions a partir da branch `develop`
+    image: ghcr.io/softcominnovation/softconnect:dev
+    networks:
+      - network_public
+    environment:
+      - NODE_ENV=production
+      # Hostname = nome do serviço Docker da stack postgres_dev na network_public
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD_DEV}@postgres_dev:5432/whatshub_dev?schema=public
+      # Hostname = nome do serviço Docker da stack redis_dev na network_public
+      - REDIS_URL=redis://redis_dev:6379/0
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - JWT_SECRET=${JWT_SECRET_DEV}
+      - ADMIN_JWT_EXPIRY=86400
+      - DEFAULT_RATE_LIMIT=100
+      - PROXY_TIMEOUT_MS=15000
+      - PROXY_MAX_RETRIES=1
+      - CIRCUIT_BREAKER_THRESHOLD=5
+      - CIRCUIT_BREAKER_RESET_MS=30000
+      - AUDIT_FLUSH_INTERVAL_MS=1000
+      - AUDIT_FLUSH_BATCH_SIZE=100
+      - DEFAULT_ADAPTER_TYPE=evolution
+    deploy:
+      mode: replicated
+      replicas: 1            # dev usa apenas 1 réplica para economizar recursos
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+      update_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        # Traefik — roteamento DESENVOLVIMENTO
+        - traefik.enable=true
+        - traefik.docker.network=network_public
+        - traefik.http.routers.softconnect-dev.rule=Host(`dev-api.hub.softconnect.net.br`)
+        - traefik.http.routers.softconnect-dev.entrypoints=websecure
+        - traefik.http.routers.softconnect-dev.tls.certresolver=letsencryptresolver
+        - traefik.http.services.softconnect-dev.loadbalancer.server.port=3000
+        - traefik.http.services.softconnect-dev.loadbalancer.passHostHeader=true
+        - traefik.http.routers.softconnect-dev.service=softconnect-dev
+
+networks:
+  network_public:
+    external: true
+    name: network_public

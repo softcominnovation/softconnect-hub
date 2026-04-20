@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  apiKeyHash  String   @unique
+  adapterType String   @default("evolution")
+  origins     String[]
+  hubRelay    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vpsId          String?
+  vps            VpsServer?      @relation(fields: [vpsId], references: [id])
+  instances      Instance[]
+  webhookConfigs WebhookConfig[]
+  auditLogs      AuditLog[]
+  batchJobs      BatchJob[]
+}
+
+model VpsServer {
+  id             String    @id @default(uuid())
+  label          String
+  subdomain      String    @unique
+  ip             String
+  providerUrl    String
+  providerApiKey String
+  adapterType    String    @default("evolution")
+  managerType    String?
+  managerUrl     String?
+  managerApiKey  String?
+  isHealthy      Boolean   @default(true)
+  lastHealthAt   DateTime?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  products     Product[]
+  instances    Instance[]
+  healthChecks HealthCheck[]
+}
+
+model Instance {
+  id            String   @id @default(uuid())
+  productId     String
+  vpsId         String
+  instanceName  String
+  instanceToken String?
+  hubToken      String   @unique
+  phoneNumber   String?
+  status        String   @default("disconnected")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product   Product    @relation(fields: [productId], references: [id])
+  vps       VpsServer  @relation(fields: [vpsId], references: [id])
+  auditLogs AuditLog[]
+  batchJobs BatchJob[]
+
+  @@unique([vpsId, instanceName])
+}
+
+model WebhookConfig {
+  id        String   @id @default(uuid())
+  productId String
+  url       String
+  secret    String
+  events    String[]
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  productId  String
+  instanceId String?
+  endpoint   String
+  method     String
+  statusCode Int
+  latencyMs  Int
+  origin     String?
+  ip         String
+  errorMsg   String?
+  createdAt  DateTime @default(now())
+
+  product  Product   @relation(fields: [productId], references: [id])
+  instance Instance? @relation(fields: [instanceId], references: [id])
+}
+
+model HealthCheck {
+  id         String   @id @default(uuid())
+  vpsId      String
+  status     String
+  responseMs Int
+  errorMsg   String?
+  checkedAt  DateTime @default(now())
+
+  vps VpsServer @relation(fields: [vpsId], references: [id])
+}
+
+model BatchJob {
+  id            String    @id @default(uuid())
+  productId     String
+  instanceId    String?
+  totalMessages Int
+  sentCount     Int       @default(0)
+  failedCount   Int       @default(0)
+  status        String    @default("processing")
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  product  Product   @relation(fields: [productId], references: [id])
+  instance Instance? @relation(fields: [instanceId], references: [id])
+}

@@ -32,3 +32,10 @@ Thumbs.db
 
 # Testes
 coverage/
+
+CLAUDE.md
+.claude/
+.cursor/
+.opencode/
+
+.codex/
