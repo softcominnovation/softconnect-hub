@@ -20,7 +20,7 @@ COPY . .
 RUN npx prisma generate
 
 # Compila TypeScript → JavaScript (output em /app/dist)
-RUN npm run build
+RUN npm run build && test -f /app/dist/main.js || (echo "BUILD FAILED: /app/dist/main.js not found" && exit 1)
 
 # Remove devDependencies aqui no builder, onde o package.json está presente
 RUN npm prune --omit=dev && npm cache clean --force
