@@ -26,7 +26,7 @@
 |------|--------|
 | **Passo 0** — Pipeline CI/CD | ✅ **100% Concluído** |
 | **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído** |
-| **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído |
+| **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído** |
 | **Passo 2.5** — Dashboard Auth & Usuários Admin | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 3** — Dynamic Adapters & Adapter Registry | ⏳ **Em andamento**  |
 | Passos 4 em diante | 🔒 Bloqueados até aprovação do Passo 3 |
