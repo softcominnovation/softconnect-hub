@@ -20,7 +20,16 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
-      .expect('Hello World!');
+      .expect((res) => {
+        const body = res.body as {
+          name: string;
+          version: string;
+          status: string;
+        };
+        expect(body.name).toBe('Softconnect - WhatsHub Gateway');
+        expect(body.version).toBe('2.0.0');
+        expect(body.status).toBe('online');
+      });
   });
 
   afterEach(async () => {

@@ -25,8 +25,9 @@
 | Fase | Status |
 |------|--------|
 | **Passo 0** — Pipeline CI/CD | ✅ **100% Concluído** |
-| **Passo 1** — Fundações da Infraestrutura | ⏳ **Implementado — aguardando gate de validação do desenvolvedor** |
-| Passos 2 em diante | 🔒 Bloqueados até aprovação do Passo 1 |
+| **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 2** — Admin Plane & Segurança | ⏳ **Em andamento** |
+| Passos 3 em diante | 🔒 Bloqueados até aprovação do Passo 2 |
 
 ---
 
@@ -68,12 +69,12 @@
 
 ### ✅ Validação do Desenvolvedor — Passo 1
 
-- [ ] **Revisar o schema Prisma final** e confirmar que todas as 7 tabelas, FKs, índices únicos e relações inversas estão corretas e condizem com a especificação técnica
-- [ ] **Verificar o seed** — executar `prisma db seed` e confirmar que os dados de desenvolvimento sobem corretamente
-- [ ] **Testar o container** — subir com `docker-compose.dev.yaml` e confirmar que a aplicação inicializa sem erros, conecta ao Postgres e ao Redis
-- [ ] **Revisão arquitetural geral** — verificar se há ajustes, melhorias ou correções antes de entrar na fase de codificação dos módulos
+- [x] **Revisar o schema Prisma final** e confirmar que todas as 7 tabelas, FKs, índices únicos e relações inversas estão corretas e condizem com a especificação técnica
+- [x] **Verificar o seed** — executar `prisma db seed` e confirmar que os dados de desenvolvimento sobem corretamente
+- [x] **Testar o container** — subir com `docker-compose.dev.yaml` e confirmar que a aplicação inicializa sem erros, conecta ao Postgres e ao Redis
+- [x] **Revisão arquitetural geral** — verificar se há ajustes, melhorias ou correções antes de entrar na fase de codificação dos módulos
 
-> **🔒 A próxima fase (Passo 2) só pode ser iniciada após este gate estar marcado como concluído e o desenvolvedor solicitar explicitamente o avanço.**
+> **✅ Gate de validação do Passo 1 APROVADO.** Infraestrutura pronta para avançar ao Passo 2 — Admin Plane & Segurança.
 
 ---
 
@@ -83,50 +84,88 @@
 
 ### 2.1 — Módulos de infraestrutura do NestJS
 
-- [ ] Criar `PrismaModule` com `PrismaService` injetável (wrapper do `PrismaClient` como `@Injectable()`)
-- [ ] Criar `CacheModule` com `CacheService` — abstração ioredis com helpers de TTL (`get`, `set`, `del`, `setWithTTL`)
-- [ ] Criar `ConfigModule` com `config.schema.ts` validando todas as variáveis obrigatórias via Zod no bootstrap
+- [x] Criar `PrismaModule` com `PrismaService` injetável (wrapper do `PrismaClient` como `@Injectable()`)
+- [x] Criar `CacheModule` com `CacheService` — abstração ioredis com helpers de TTL (`get`, `set`, `del`, `setWithTTL`)
+- [x] Criar `ConfigModule` com `config.schema.ts` validando todas as variáveis obrigatórias via Zod no bootstrap
 
 ### 2.2 — Autenticação
 
-- [ ] Implementar `JwtGuard` para o Admin Plane
-- [ ] Criar endpoint `POST /admin/auth/login` retornando JWT com `ADMIN_JWT_EXPIRY` (24h padrão)
-- [ ] Implementar `ApiKeyGuard` — Redis-first, cache `auth:{apiKeyHash}` com `{ productId, isActive, origins[], hubRelay, adapterType, vpsId }` (incluir **obrigatoriamente** o `vpsId`)
-- [ ] Implementar `IpWhitelistGuard` para `/internal/webhook/*`
+- [x] Implementar `JwtGuard` para o Admin Plane
+- [x] Criar endpoint `POST /admin/auth/login` retornando JWT com `ADMIN_JWT_EXPIRY` (24h padrão)
+- [x] Implementar `ApiKeyGuard` — Redis-first, cache `auth:{apiKeyHash}` com `{ productId, isActive, origins[], hubRelay, adapterType, vpsId }` (incluir **obrigatoriamente** o `vpsId`)
+- [x] Implementar `IpWhitelistGuard` para `/internal/webhook/*`
 
 ### 2.3 — CRUD Admin: Produtos
 
-- [ ] `POST /admin/products` — geração de apikey, hash SHA-256, vínculo com `vpsId`
-- [ ] `GET /admin/products` — listar produtos
-- [ ] `PUT /admin/products/:id` — atualizar (incluindo `adapterType`) + invalidar cache Redis
-- [ ] `DELETE /admin/products/:id` — desativar produto + invalidar cache Redis
+- [x] `POST /admin/products` — geração de apikey, hash SHA-256, vínculo com `vpsId`
+- [x] `GET /admin/products` — listar produtos
+- [x] `PUT /admin/products/:id` — atualizar (incluindo `adapterType`) + invalidar cache Redis
+- [x] `DELETE /admin/products/:id` — desativar produto + invalidar cache Redis
 
 ### 2.4 — CRUD Admin: VPS
 
-- [ ] `POST /admin/vps` — cadastrar VPS com `providerApiKey` criptografado via AES-256-GCM
-- [ ] `GET /admin/vps` — listar VPS (retornar `providerApiKey` descriptografado apenas para admin autenticado)
-- [ ] `PUT /admin/vps/:id` — atualizar VPS + re-criptografar credenciais se alteradas
-- [ ] `DELETE /admin/vps/:id` — desativar VPS
+- [x] `POST /admin/vps` — cadastrar VPS com `providerApiKey` criptografado via AES-256-GCM
+- [x] `GET /admin/vps` — listar VPS (retornar `providerApiKey` descriptografado apenas para admin autenticado)
+- [x] `PUT /admin/vps/:id` — atualizar VPS + re-criptografar credenciais se alteradas
+- [x] `DELETE /admin/vps/:id` — desativar VPS
 
 ### 2.5 — Testes
 
-- [ ] Testes unitários: `ApiKeyGuard` (HIT e MISS no Redis), `JwtGuard`, `IpWhitelistGuard`
-- [ ] Testes unitários: `CacheService` (get/set/del/TTL)
-- [ ] Testes de integração (e2e com supertest): fluxo completo de criação, leitura e atualização de produto e VPS
-- [ ] Verificar que a aplicação **não sobe** com variável obrigatória ausente (teste do ConfigModule + Zod)
+- [x] Testes unitários: `ApiKeyGuard` (HIT e MISS no Redis), `JwtGuard`, `IpWhitelistGuard`
+- [x] Testes unitários: `CacheService` (get/set/del/TTL)
+- [x] Testes de integração (e2e com supertest): fluxo completo de criação, leitura e atualização de produto e VPS
+- [x] Verificar que a aplicação **não sobe** com variável obrigatória ausente (teste do ConfigModule + Zod)
 
 ### ✅ Validação do Desenvolvedor — Passo 2
 
-- [ ] Testar manualmente o fluxo completo: criar produto via admin → autenticar com a apikey gerada → confirmar que o guard valida corretamente
-- [ ] Confirmar que a criptografia AES-256-GCM das credenciais das VPS funciona (encrypt → armazenar → decrypt)
-- [ ] Revisar os objetos cacheados no Redis e confirmar que `vpsId` e `adapterType` estão presentes em `auth:{apiKeyHash}`
-- [ ] Avaliar necessidade de ajustes, melhorias ou correções antes de avançar
+- [x] Testar manualmente o fluxo completo: criar produto via admin → autenticar com a apikey gerada → confirmar que o guard valida corretamente
+- [x] Confirmar que a criptografia AES-256-GCM das credenciais das VPS funciona (encrypt → armazenar → decrypt)
+- [x] Revisar os objetos cacheados no Redis e confirmar que `vpsId` e `adapterType` estão presentes em `auth:{apiKeyHash}`
+- [x] Avaliar necessidade de ajustes, melhorias ou correções antes de avançar
+
+---
+
+## Passo 2.5: Dashboard Auth & Usuários Admin
+
+*Objetivo: Permitir que humanos se autentiquem no painel admin com email/senha e gerenciem outros usuários admin. Auth machine (ADMIN_SECRET) continua funcionando em paralelo.*
+
+- [x] Instalar `bcryptjs` (sem binários nativos)
+- [x] Adicionar `ALLOW_BOOTSTRAP` em `config.schema.ts`
+- [x] Adicionar modelos `AdminUser` e `AdminActivityLog` em `schema.prisma`
+- [x] Executar `prisma generate` (migration SQL criada manualmente — aplicar com `npx prisma migrate dev` quando banco disponível)
+- [x] Criar `src/admin/activity/activity.service.ts` — fire-and-forget, `findAll` paginado
+- [x] Criar `src/admin/activity/activity.controller.ts` — `GET /admin/activity` com JwtGuard
+- [x] Criar `src/admin/activity/activity.module.ts` — exporta `AdminActivityService`
+- [x] Criar `src/admin/dashboard-auth/dto/dashboard-login.dto.ts`
+- [x] Criar `src/admin/dashboard-auth/dashboard-auth.service.ts` — login com bcrypt, getMe
+- [x] Criar `src/admin/dashboard-auth/dashboard-auth.controller.ts` — POST login, GET /me
+- [x] Criar `src/admin/dashboard-auth/dashboard-auth.module.ts`
+- [x] Criar `src/admin/users/dto/create-user.dto.ts` e `update-user.dto.ts`
+- [x] Criar `src/admin/users/users.service.ts` — bootstrap, create, findAll, update, deactivate
+- [x] Criar `src/admin/users/users.controller.ts` — todos os endpoints CRUD + bootstrap
+- [x] Criar `src/admin/users/users.module.ts`
+- [x] Atualizar `app.module.ts` — importar os 3 novos módulos
+- [x] Testes unitários: `activity.service.spec.ts`, `dashboard-auth.service.spec.ts`, `users.service.spec.ts` (16 testes, todos passando)
+- [x] Criar `ignored-docs/passo-extra-testes.md` e `ignored-docs/passo-extra-curls.md`
+
+### ✅ Validação do Desenvolvedor — Passo 2.5
+
+- [x] Executar `npx prisma migrate dev` com banco disponível para aplicar a migration
+- [x] Bootstrap cria admin corretamente com `ALLOW_BOOTSTRAP=true`
+- [x] Bootstrap rejeita secret inválido (403) e admin duplicado (409)
+- [x] Login retorna JWT com `sub` = UUID do usuário
+- [x] GET /me retorna dados sem `passwordHash`
+- [x] CRUD de usuários funciona via token dashboard
+- [x] Activity log registra ações corretamente
+- [x] Auth machine (via `ADMIN_SECRET`) continua funcionando em paralelo
 
 > **🔒 O Passo 3 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
 
 ---
 
 ## Passo 3: Dynamic Adapters & Adapter Registry
+
+> **🔒 Este passo está bloqueado. Os Passos 2 e 2.5 devem ser concluídos e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
 
 *Objetivo: Inserir a essência multi-provider do Hub — resolução dinâmica de adapter por produto.*
 

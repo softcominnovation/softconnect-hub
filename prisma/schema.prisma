@@ -99,6 +99,29 @@ model AuditLog {
   instance Instance? @relation(fields: [instanceId], references: [id])
 }
 
+model AdminUser {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  type         String   @default("admin")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  activityLogs AdminActivityLog[]
+}
+
+model AdminActivityLog {
+  id          String   @id @default(uuid())
+  adminUserId String
+  action      String
+  detail      String?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+}
 model HealthCheck {
   id         String   @id @default(uuid())
   vpsId      String

@@ -42,6 +42,6 @@ ETAPA ANTERIOR : Passo 0 — Pipeline CI/CD (gate aprovado)
 
 - [x] A fase anterior (Passo 0) tem o gate de validação marcado como `[x]` ✔
 - [x] O Passo 1 está marcado como `⏳ Implementado — aguardando gate de validação` ✔
-- [ ] Não avançar para o Passo 2 sem que o desenvolvedor marque o gate e solicite explicitamente o avanço
+- [ ] Não avançar para o Passo 3 sem que o desenvolvedor marque o gate e solicite explicitamente o avanço
 
 Se qualquer inconsistência for encontrada na revisão, reporte antes de sugerir qualquer ação.
