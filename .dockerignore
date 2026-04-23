@@ -1,0 +1,32 @@
+# Build output — sempre gerado dentro do container
+dist/
+
+# Dependências locais — sempre reinstaladas via npm ci
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Docker
+docker-compose*.yml
+Dockerfile
+
+# Ambiente local
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# Testes
+coverage/
+test/
+**/*.spec.ts
+**/*.e2e-spec.ts
