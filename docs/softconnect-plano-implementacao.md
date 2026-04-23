@@ -27,9 +27,10 @@
 | **Passo 0** — Pipeline CI/CD | ✅ **100% Concluído** |
 | **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído** |
 | **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído** |
-| **Passo 2.5** — Dashboard Auth & Usuários Admin | ✅ **100% Concluído — Gate de validação aprovado** |
-| **Passo 3** — Dynamic Adapters & Adapter Registry | ⏳ **Em andamento**  |
-| Passos 4 em diante | 🔒 Bloqueados até aprovação do Passo 3 |
+| **Passo 2.5** — Dashboard Auth & Usuários Admin | ✅ **100% Concluído** |
+| **Passo 3** — Dynamic Adapters & Adapter Registry | ✅ **100% Concluído - Gate de validação aprovado** |
+| **Passo 4** — Implementação do EvolutionAdapter | ⏳ **Em andamento** |
+| Passos 5 em diante | 🔒 Bloqueados até aprovação do Passo 4 |
 
 ---
 
@@ -48,9 +49,6 @@
 ### ✅ Validação do Desenvolvedor — Passo 0
 
 - [x] **Gate concluído.** Pipeline validado end-to-end. Passo 0 aprovado para continuidade.
-
-> 📄 Tutorial CI/CD completo: `docs/softconnect-cicd-tutorial.html`
-> 📄 Tutorial de versionamento Docker: `docs/softconnect-docker-versioning-tutorial.html`
 
 ---
 
@@ -161,40 +159,39 @@
 - [x] Activity log registra ações corretamente
 - [x] Auth machine (via `ADMIN_SECRET`) continua funcionando em paralelo
 
-> **🔒 O Passo 3 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
+> **✅ Gate de validação do Passo 2.5 APROVADO.**
 
 ---
 
 ## Passo 3: Dynamic Adapters & Adapter Registry
 
-> **🔒 Este passo está bloqueado. Os Passos 2 e 2.5 devem ser concluídos e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
-
 *Objetivo: Inserir a essência multi-provider do Hub — resolução dinâmica de adapter por produto.*
 
 ### 3.1 — Contratos e Registry
 
-- [ ] Criar interface `WhatsAppProvider` completa com todos os métodos tipados e `ProviderContext` por chamada (conforme `softconnect-spec-tecnica.md`, seção 6)
-- [ ] Criar `AdapterRegistryService` — `Map<string, WhatsAppProvider>` com `register`, `get` e `getAvailableTypes`
-- [ ] Criar `AdapterResolverService` — `resolve(adapterType)` delegando para o registry
-- [ ] Criar `ProviderModule` exportando Registry e Resolver
-- [ ] Criar `GET /admin/adapters` — retorna lista de adapters disponíveis em runtime (lista o registry)
+- [x] Criar interface `WhatsAppProvider` completa com todos os métodos tipados e `ProviderContext` por chamada (conforme `softconnect-spec-tecnica.md`, seção 6)
+- [x] Criar `AdapterRegistryService` — `Map<string, WhatsAppProvider>` com `register`, `get` e `getAvailableTypes`
+- [x] Criar `AdapterResolverService` — `resolve(adapterType)` delegando para o registry
+- [x] Criar `ProviderModule` exportando Registry e Resolver
+- [x] Criar `GET /admin/adapters` — retorna lista de adapters disponíveis em runtime (lista o registry)
 
 ### 3.2 — Testes
 
-- [ ] Testes unitários: `AdapterRegistryService` — registro de adapter, resolução por type, erro ao type não registrado
-- [ ] Testes unitários: `AdapterResolverService` — resolução correta e propagação de erro de type inválido
+- [x] Testes unitários: `AdapterRegistryService` — registro de adapter, resolução por type, erro ao type não registrado
+- [x] Testes unitários: `AdapterResolverService` — resolução correta e propagação de erro de type inválido
 
 ### ✅ Validação do Desenvolvedor — Passo 3
 
-- [ ] Confirmar que a interface `WhatsAppProvider` está completa e condiz com todos os endpoints mapeados na spec
-- [ ] Confirmar que `AdapterRegistry` funciona corretamente em memória (sem estado externo)
-- [ ] Avaliar ajustes ou adições de métodos à interface antes de implementar o primeiro adapter
+- [x] Confirmar que a interface `WhatsAppProvider` está completa e condiz com todos os endpoints mapeados na spec
+- [x] Confirmar que `AdapterRegistry` funciona corretamente em memória (sem estado externo)
+- [x] Avaliar ajustes ou adições de métodos à interface antes de implementar o primeiro adapter
 
-> **🔒 O Passo 4 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
+> **✅ Gate de validação do Passo 3 APROVADO.**
 
 ---
 
 ## Passo 4: Implementação do EvolutionAdapter
+
 
 *Objetivo: Validar que o Registry funciona ligando o provider atual (Evolution API).*
 
@@ -229,6 +226,8 @@
 ---
 
 ## Passo 5: Controllers do Data Plane
+
+> **🔒 Este passo está bloqueado. O Passo 4 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
 
 *Objetivo: Expor os endpoints para uso final, ligando autenticação, resolução de instância e adapter.*
 
