@@ -12,6 +12,7 @@ CREATE TABLE "AdminUser" (
     CONSTRAINT "AdminUser_pkey" PRIMARY KEY ("id")
 );
 
+
 -- CreateTable
 CREATE TABLE "AdminActivityLog" (
     "id" TEXT NOT NULL,

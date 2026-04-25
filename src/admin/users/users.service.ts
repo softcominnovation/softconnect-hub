@@ -1,4 +1,9 @@
-import { Injectable, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -25,7 +30,11 @@ export class AdminUsersService {
     private readonly activity: AdminActivityService,
   ) {}
 
-  async bootstrap(dto: CreateUserDto, providedSecret: string | undefined, ip?: string): Promise<{ id: string }> {
+  async bootstrap(
+    dto: CreateUserDto,
+    providedSecret: string | undefined,
+    ip?: string,
+  ): Promise<{ id: string }> {
     const allowBootstrap = this.config.get('ALLOW_BOOTSTRAP', { infer: true });
     if (!allowBootstrap) {
       throw new ForbiddenException('Bootstrap is disabled');
@@ -36,7 +45,9 @@ export class AdminUsersService {
       throw new ForbiddenException('Invalid admin secret');
     }
 
-    const existing = await this.prisma.adminUser.findFirst({ where: { isActive: true } });
+    const existing = await this.prisma.adminUser.findFirst({
+      where: { isActive: true },
+    });
     if (existing) {
       throw new ConflictException('An active admin user already exists');
     }
@@ -56,8 +67,14 @@ export class AdminUsersService {
     return { id: user.id };
   }
 
-  async create(dto: CreateUserDto, actorId?: string, ip?: string): Promise<{ id: string }> {
-    const existing = await this.prisma.adminUser.findUnique({ where: { email: dto.email } });
+  async create(
+    dto: CreateUserDto,
+    actorId?: string,
+    ip?: string,
+  ): Promise<{ id: string }> {
+    const existing = await this.prisma.adminUser.findUnique({
+      where: { email: dto.email },
+    });
     if (existing) {
       throw new ConflictException('Email already in use');
     }

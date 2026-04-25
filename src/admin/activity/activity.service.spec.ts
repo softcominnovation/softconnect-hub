@@ -40,14 +40,18 @@ describe('AdminActivityService', () => {
     });
 
     it('should not throw even if prisma rejects', () => {
-      mockPrisma.adminActivityLog.create.mockRejectedValue(new Error('db error'));
+      mockPrisma.adminActivityLog.create.mockRejectedValue(
+        new Error('db error'),
+      );
       expect(() => service.record('user-1', 'LOGIN')).not.toThrow();
     });
   });
 
   describe('findAll', () => {
     it('should return paginated results', async () => {
-      const rows = [{ id: '1', action: 'LOGIN', adminUser: { email: 'a@b.com' } }];
+      const rows = [
+        { id: '1', action: 'LOGIN', adminUser: { email: 'a@b.com' } },
+      ];
       mockPrisma.adminActivityLog.findMany.mockResolvedValue(rows);
       mockPrisma.adminActivityLog.count.mockResolvedValue(1);
 

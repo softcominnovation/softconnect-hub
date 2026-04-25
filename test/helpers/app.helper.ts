@@ -5,6 +5,8 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 
+export const API_PREFIX = 'api/v1';
+
 export async function createTestApp(): Promise<NestFastifyApplication> {
   const moduleFixture: TestingModule = await Test.createTestingModule({
     imports: [AppModule],
@@ -13,6 +15,8 @@ export async function createTestApp(): Promise<NestFastifyApplication> {
   const app = moduleFixture.createNestApplication<NestFastifyApplication>(
     new FastifyAdapter(),
   );
+
+  app.setGlobalPrefix(API_PREFIX);
 
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
@@ -25,7 +29,7 @@ export async function getAdminToken(
 ): Promise<string> {
   const res = await app.inject({
     method: 'POST',
-    url: '/admin/auth/login',
+    url: `/${API_PREFIX}/admin/auth/login`,
     payload: { secret: process.env.ADMIN_SECRET ?? 'minha-senha-admin-dev' },
   });
 

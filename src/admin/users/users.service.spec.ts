@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AdminUsersService } from './users.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -51,16 +55,25 @@ describe('AdminUsersService', () => {
 
       const result = await service.bootstrap(dto, 'my-secret');
       expect(result).toEqual({ id: 'new-id' });
-      expect(mockActivity.record).toHaveBeenCalledWith('new-id', 'BOOTSTRAP', undefined, undefined);
+      expect(mockActivity.record).toHaveBeenCalledWith(
+        'new-id',
+        'BOOTSTRAP',
+        undefined,
+        undefined,
+      );
     });
 
     it('should throw ConflictException if active user already exists', async () => {
       mockPrisma.adminUser.findFirst.mockResolvedValue({ id: 'existing' });
-      await expect(service.bootstrap(dto, 'my-secret')).rejects.toThrow(ConflictException);
+      await expect(service.bootstrap(dto, 'my-secret')).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('should throw ForbiddenException for invalid secret', async () => {
-      await expect(service.bootstrap(dto, 'wrong-secret')).rejects.toThrow(ForbiddenException);
+      await expect(service.bootstrap(dto, 'wrong-secret')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('should throw ForbiddenException when bootstrap is disabled', async () => {
@@ -68,7 +81,9 @@ describe('AdminUsersService', () => {
         if (key === 'ALLOW_BOOTSTRAP') return false;
         return undefined;
       });
-      await expect(service.bootstrap(dto, 'my-secret')).rejects.toThrow(ForbiddenException);
+      await expect(service.bootstrap(dto, 'my-secret')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 
@@ -92,7 +107,10 @@ describe('AdminUsersService', () => {
   describe('deactivate', () => {
     it('should set isActive to false', async () => {
       mockPrisma.adminUser.findUnique.mockResolvedValue({ id: 'user-1' });
-      mockPrisma.adminUser.update.mockResolvedValue({ id: 'user-1', isActive: false });
+      mockPrisma.adminUser.update.mockResolvedValue({
+        id: 'user-1',
+        isActive: false,
+      });
 
       const result = await service.deactivate('user-1');
       expect(result).toEqual({ ok: true });
@@ -100,7 +118,9 @@ describe('AdminUsersService', () => {
 
     it('should throw NotFoundException for unknown id', async () => {
       mockPrisma.adminUser.findUnique.mockResolvedValue(null);
-      await expect(service.deactivate('ghost-id')).rejects.toThrow(NotFoundException);
+      await expect(service.deactivate('ghost-id')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

@@ -49,12 +49,19 @@ describe('DashboardAuthService', () => {
 
       const result = await service.login('a@b.com', 'password123');
       expect(result.access_token).toBe('signed-token');
-      expect(mockActivity.record).toHaveBeenCalledWith('user-1', 'LOGIN', undefined, undefined);
+      expect(mockActivity.record).toHaveBeenCalledWith(
+        'user-1',
+        'LOGIN',
+        undefined,
+        undefined,
+      );
     });
 
     it('should throw UnauthorizedException for unknown email', async () => {
       mockPrisma.adminUser.findUnique.mockResolvedValue(null);
-      await expect(service.login('x@y.com', 'pass')).rejects.toThrow(UnauthorizedException);
+      await expect(service.login('x@y.com', 'pass')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('should throw UnauthorizedException for inactive user', async () => {
@@ -66,7 +73,9 @@ describe('DashboardAuthService', () => {
         type: 'admin',
         isActive: false,
       });
-      await expect(service.login('a@b.com', 'password123')).rejects.toThrow(UnauthorizedException);
+      await expect(service.login('a@b.com', 'password123')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('should throw UnauthorizedException for wrong password', async () => {
@@ -78,7 +87,9 @@ describe('DashboardAuthService', () => {
         type: 'admin',
         isActive: true,
       });
-      await expect(service.login('a@b.com', 'wrong')).rejects.toThrow(UnauthorizedException);
+      await expect(service.login('a@b.com', 'wrong')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 

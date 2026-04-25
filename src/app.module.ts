@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdaptersModule } from './adapters/adapters.module';
 import { AdminAdaptersModule } from './admin/adapters/adapters.module';
 import { AdminAuthModule } from './admin/auth/admin-auth.module';
 import { ProductsModule } from './admin/products/products.module';
@@ -19,13 +20,14 @@ import { ProviderModule } from './providers/provider.module';
     PrismaModule,
     CacheModule,
     ProviderModule,
+    AdaptersModule,
     AdminAuthModule,
     ProductsModule,
     VpsModule,
+    AdminAdaptersModule,
     AdminActivityModule,
     DashboardAuthModule,
     AdminUsersModule,
-    AdminAdaptersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -7,8 +7,8 @@
 ## Contexto da Sessão ou fase
 
 **Projeto:** SoftConnect 2.0
-**Etapa atual:** Passo 4 — Implementação do EvolutionAdapter
-**Objetivo desta sessão:** Implementar o EvolutionAdapter completo (HTTP client, métodos de instância/mensagem/chat/webhook, circuit breaker e testes)
+**Etapa atual:** Passo 4 — Implementação do EvolutionAdapter (implementado — aguardando gate)
+**Objetivo desta sessão:** Passo X implementado integralmente (testes passando). Aguardando gate de validação do desenvolvedor para Passo 5.
 
 ---
 
@@ -27,12 +27,12 @@ Leia os seguintes arquivos integralmente, nesta ordem, antes de responder:
 
 ## Instrução de Revisão
 
-Esta etapa está pronta para ser iniciada. Antes de qualquer implementação, leia os documentos listados acima e confirme o estado atual do projeto.
+Esta etapa está concluída e aguardando gate de validação. Antes de qualquer outra ação, aplique o protocolo de revisão definido em `docs/REVIEW-INSTRUCTIONS.md` com os seguintes parâmetros:
 
 ```
+
 ETAPA ATUAL    : Passo 4 — Implementação do EvolutionAdapter
 ETAPA ANTERIOR : Passo 3 — Dynamic Adapters & Adapter Registry (gate aprovado)
-ETAPA ANTERIOR : Passo 2.5 — Dashboard Auth & Usuários Admin (gate aprovado)
 ETAPA ANTERIOR : Passo 2 — Admin Plane & Segurança (gate aprovado)
 ETAPA ANTERIOR : Passo 1 — Fundações da Infraestrutura (gate aprovado)
 ETAPA ANTERIOR : Passo 0 — Pipeline CI/CD (gate aprovado)
@@ -47,8 +47,9 @@ ETAPA ANTERIOR : Passo 0 — Pipeline CI/CD (gate aprovado)
 - [x] A fase anterior (Passo 0) tem o gate de validação marcado como `[x]` ✔
 - [x] O Passo 1 está com gate de validação aprovado ✔
 - [x] O Passo 2 está com gate de validação aprovado ✔
-- [x] O Passo 2.5 está com gate de validação aprovado ✔
 - [x] O Passo 3 está com gate de validação aprovado ✔
-- [ ] Não avançar para o Passo 5 sem que o desenvolvedor marque o gate do Passo 4 e solicite explicitamente o avanço
+- [x] O Passo 2.5 está implementado — aguardando gate de validação do desenvolvedor
+- [x] O Passo 4 está implementado — aguardando gate de validação do desenvolvedor
+- [ ] Não avançar para o Passo 5 sem que o desenvolvedor marque os gates e solicite explicitamente o avanço
 
 Se qualquer inconsistência for encontrada na revisão, reporte antes de sugerir qualquer ação.

@@ -24,12 +24,16 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@fastify/swagger": "^9.7.0",
+    "@fastify/swagger-ui": "^5.2.6",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/platform-fastify": "^11.1.19",
+    "@nestjs/swagger": "^11.4.1",
     "@prisma/client": "^6.19.3",
+    "axios": "^1.15.1",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.74.1",
     "ioredis": "^5.10.1",

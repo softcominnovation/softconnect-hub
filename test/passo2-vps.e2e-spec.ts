@@ -1,17 +1,22 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { PrismaClient } from '@prisma/client';
 import { createTestApp, getAdminToken } from './helpers/app.helper';
 
 describe('Admin VPS (e2e)', () => {
   let app: NestFastifyApplication;
   let token: string;
   let createdVpsId: string;
+  const prisma = new PrismaClient();
 
   beforeAll(async () => {
+    await prisma.instance.deleteMany();
+    await prisma.vpsServer.deleteMany();
     app = await createTestApp();
     token = await getAdminToken(app);
   });
 
   afterAll(async () => {
+    await prisma.$disconnect();
     await app.close();
   });
 
@@ -19,7 +24,7 @@ describe('Admin VPS (e2e)', () => {
     it('cria VPS e retorna providerApiKey descriptografada', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/vps',
+        url: '/api/v1/admin/vps',
         headers: { authorization: `Bearer ${token}` },
         payload: {
           label: 'VPS E2E Teste',
@@ -52,7 +57,7 @@ describe('Admin VPS (e2e)', () => {
     it('retorna 401 sem JWT', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/vps',
+        url: '/api/v1/admin/vps',
         payload: {
           label: 'Sem Auth',
           subdomain: 'sem-auth.com',
@@ -69,7 +74,7 @@ describe('Admin VPS (e2e)', () => {
     it('lista VPS com chaves descriptografadas', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/admin/vps',
+        url: '/api/v1/admin/vps',
         headers: { authorization: `Bearer ${token}` },
       });
 
@@ -84,7 +89,7 @@ describe('Admin VPS (e2e)', () => {
     });
 
     it('retorna 401 sem JWT', async () => {
-      const res = await app.inject({ method: 'GET', url: '/admin/vps' });
+      const res = await app.inject({ method: 'GET', url: '/api/v1/admin/vps' });
       expect(res.statusCode).toBe(401);
     });
   });
@@ -93,7 +98,7 @@ describe('Admin VPS (e2e)', () => {
     it('atualiza chave e resposta mostra valor descriptografado', async () => {
       const res = await app.inject({
         method: 'PUT',
-        url: `/admin/vps/${createdVpsId}`,
+        url: `/api/v1/admin/vps/${createdVpsId}`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           providerApiKey: 'nova-chave-provider-atualizada',
@@ -108,7 +113,7 @@ describe('Admin VPS (e2e)', () => {
     it('retorna 404 para id inexistente', async () => {
       const res = await app.inject({
         method: 'PUT',
-        url: '/admin/vps/id-que-nao-existe',
+        url: '/api/v1/admin/vps/id-que-nao-existe',
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'Qualquer' },
       });
@@ -120,7 +125,7 @@ describe('Admin VPS (e2e)', () => {
     it('desativa VPS com sucesso', async () => {
       const res = await app.inject({
         method: 'DELETE',
-        url: `/admin/vps/${createdVpsId}`,
+        url: `/api/v1/admin/vps/${createdVpsId}`,
         headers: { authorization: `Bearer ${token}` },
       });
 

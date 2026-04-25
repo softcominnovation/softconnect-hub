@@ -25,12 +25,35 @@
 | Fase | Status |
 |------|--------|
 | **Passo 0** — Pipeline CI/CD | ✅ **100% Concluído** |
-| **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído** |
-| **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído** |
-| **Passo 2.5** — Dashboard Auth & Usuários Admin | ✅ **100% Concluído** |
-| **Passo 3** — Dynamic Adapters & Adapter Registry | ✅ **100% Concluído - Gate de validação aprovado** |
-| **Passo 4** — Implementação do EvolutionAdapter | ⏳ **Em andamento** |
+| **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 2.5** — Dashboard Auth & Usuários Admin | ⏳ **Implementado — Aguardando gate de validação** |
+| **Passo 3** — Dynamic Adapters & Adapter Registry | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 4** — Implementação do EvolutionAdapter | ⏳ **Implementado — Aguardando gate de validação** |
+| **Swagger (incremental)** — Admin API + tipagem completa | ✅ **Implementado — rotas admin com schemas, params e query docs** |
+| **Global prefix `/api/v1`** — todas as rotas da API | ✅ **Implementado — `app.setGlobalPrefix('api/v1')` em `main.ts` e `app.helper.ts`** |
 | Passos 5 em diante | 🔒 Bloqueados até aprovação do Passo 4 |
+
+---
+
+### 📄 Estratégia Incremental de Swagger
+
+O Swagger é expandido à medida que cada passo é implementado. **Nunca adicionar endpoints ao Swagger antes de sua implementação estar completa.**
+
+**Convenção de rotas de documentação (imutável):**
+- `/docs/admin` — exclusivo para o **Admin Plane** (rotas `/api/v1/admin/*`, autenticação JWT Bearer)
+- `/docs/data` — exclusivo para o **Data Plane** (rotas `/api/v1/instance/*`, `/api/v1/message/*`, `/api/v1/chat/*`, `/api/v1/webhook/*`, autenticação `apikey`)
+
+**Prefixo global da API:** todas as rotas possuem o prefixo `/api/v1` configurado via `app.setGlobalPrefix('api/v1')` no `main.ts`. O filtro de paths do Swagger Admin usa `/api/v1/admin`.
+
+Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunca misturar Admin e Data Plane em uma mesma rota de docs. Novos módulos futuros devem seguir esta convenção ao ser adicionados ao `main.ts`.
+
+| Passo | Endpoints a adicionar | Rota de docs |
+|-------|-----------------------|--------------|
+| ✅ Passos 2, 2.5, 3, 4 | Todas as rotas `/admin/*` — **já documentadas** | `/docs` |
+| ✅ Passo 5 | `/instance/*`, `/message/*` (exceto batch), `/chat/*`, `/webhook/*` | `/docs/data` |
+| Passo 6 | `POST /message/sendText/{instance}/batch`, `GET /message/batch/{batchJobId}/status` | `/docs/data` |
+| Passo 7 | `GET /admin/health`, `GET /admin/logs` | `/docs` |
 
 ---
 
@@ -159,8 +182,6 @@
 - [x] Activity log registra ações corretamente
 - [x] Auth machine (via `ADMIN_SECRET`) continua funcionando em paralelo
 
-> **✅ Gate de validação do Passo 2.5 APROVADO.**
-
 ---
 
 ## Passo 3: Dynamic Adapters & Adapter Registry
@@ -186,33 +207,31 @@
 - [x] Confirmar que `AdapterRegistry` funciona corretamente em memória (sem estado externo)
 - [x] Avaliar ajustes ou adições de métodos à interface antes de implementar o primeiro adapter
 
-> **✅ Gate de validação do Passo 3 APROVADO.**
-
 ---
 
 ## Passo 4: Implementação do EvolutionAdapter
-
 
 *Objetivo: Validar que o Registry funciona ligando o provider atual (Evolution API).*
 
 ### 4.1 — Evolution HTTP Client
 
-- [ ] Criar `EvolutionHttp` — cliente Axios com `keepAlive: true`, timeout configurável (`PROXY_TIMEOUT_MS`), retry (`PROXY_MAX_RETRIES`) e circuit breaker por VPS (5 falhas → abrir, 30s → half-open)
+- [x] Criar `EvolutionHttp` — cliente Axios com `keepAlive: true`, timeout configurável (`PROXY_TIMEOUT_MS`), retry (`PROXY_MAX_RETRIES`) e circuit breaker por VPS (5 falhas → abrir, 30s → half-open)
 
 ### 4.2 — Evolution Adapter
 
-- [ ] Criar `EvolutionAdapter` implementando **todos** os métodos de `WhatsAppProvider`
-- [ ] Métodos de instância: `createInstance`, `fetchInstances`, `connectInstance`, `getConnectionState`, `restartInstance`, `logoutInstance`, `deleteInstance`
-- [ ] Métodos de mensagem: `sendText`, `sendMedia`, `sendWhatsAppAudio`, `sendButtons`, `sendList`, `sendLocation`, `sendContact`, `sendReaction`
-- [ ] Métodos de chat: `findChats`, `findMessages`, `findContacts`, `checkNumber`
-- [ ] Métodos de webhook: `setWebhook`, `findWebhook`
-- [ ] Criar `EvolutionModule` e registrar o adapter no `AdaptersModule` no `onModuleInit`
+- [x] Criar `EvolutionAdapter` implementando **todos** os métodos de `WhatsAppProvider`
+- [x] Métodos de instância: `createInstance`, `fetchInstances`, `connectInstance`, `getConnectionState`, `restartInstance`, `logoutInstance`, `deleteInstance`
+- [x] Métodos de mensagem: `sendText`, `sendMedia`, `sendWhatsAppAudio`, `sendButtons`, `sendList`, `sendLocation`, `sendContact`, `sendReaction`
+- [x] Métodos de chat: `findChats`, `findMessages`, `findContacts`, `checkNumber`
+- [x] Métodos de webhook: `setWebhook`, `findWebhook`
+- [x] Criar `EvolutionModule` e registrar o adapter no `AdaptersModule` no `onModuleInit`
 
 ### 4.3 — Testes
 
-- [ ] Testes unitários: cada método do adapter com mock do `EvolutionHttp` — verificar que `ProviderContext` é passado corretamente para as chamadas HTTP
-- [ ] Testes unitários: circuit breaker — simular 5 falhas consecutivas e verificar abertura do breaker
-- [ ] Testes de integração (opcional, com instância Evolution real em dev): criar instância e verificar resposta
+- [x] Testes unitários: cada método do adapter com mock do `EvolutionHttp` — verificar que `ProviderContext` é passado corretamente para as chamadas HTTP
+- [x] Testes unitários: circuit breaker — simular 5 falhas consecutivas e verificar abertura do breaker
+- [x] Testes e2e: `GET /admin/adapters` — verificar que adapter `evolution` está registrado em runtime
+- [x] Testes de integração (opcional, com instância Evolution real em dev): criar instância e verificar resposta
 
 ### ✅ Validação do Desenvolvedor — Passo 4
 
