@@ -235,61 +235,59 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 
 ### ✅ Validação do Desenvolvedor — Passo 4
 
-- [ ] Testar manualmente ao menos `sendText` e `fetchInstances` com uma instância Evolution real no ambiente de dev
-- [ ] Confirmar que o circuit breaker funciona ao simular a VPS fora do ar
-- [ ] Confirmar que o adapter é stateless — mesma instância servindo chamadas com `ProviderContext` diferentes
-- [ ] Avaliar ajustes ou métodos adicionais necessários
-
-> **🔒 O Passo 5 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
+- [x] Testar manualmente ao menos `sendText` e `fetchInstances` com uma instância Evolution real no ambiente de dev
+- [x] Confirmar que o circuit breaker funciona ao simular a VPS fora do ar
+- [x] Confirmar que o adapter é stateless — mesma instância servindo chamadas com `ProviderContext` diferentes
+- [x] Avaliar ajustes ou métodos adicionais necessários
 
 ---
 
 ## Passo 5: Controllers do Data Plane
 
-> **🔒 Este passo está bloqueado. O Passo 4 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
-
 *Objetivo: Expor os endpoints para uso final, ligando autenticação, resolução de instância e adapter.*
 
 ### 5.1 — Instance Resolver
 
-- [ ] Criar `InstanceResolver` — busca Redis `instance:{productId}:{instanceName}`, MISS busca no Postgres + cacheia com TTL 300s
-- [ ] Retornar `ResolvedInstance { providerUrl, providerApiKey, vpsId, instanceId, adapterType }`
+- [x] Criar `InstanceResolver` — busca Redis `instance:{productId}:{instanceName}`, MISS busca no Postgres + cacheia com TTL 300s
+- [x] Retornar `ResolvedInstance { providerUrl, providerApiKey, vpsId, instanceId, adapterType }`
 
 ### 5.2 — Controllers
 
-- [ ] Criar `InstanceController` com todos os endpoints de instância
-- [ ] Criar `MessageController` com todos os endpoints de mensagem (exceto batch — Passo 6)
-- [ ] Criar `ChatController` com todos os endpoints de chat
-- [ ] Criar `WebhookController` com `set` e `find`, aplicando lógica de `hubRelay` no set
+- [x] Criar `InstanceController` com todos os endpoints de instância
+- [x] Criar `MessageController` com todos os endpoints de mensagem (exceto batch — Passo 6)
+- [x] Criar `ChatController` com todos os endpoints de chat
+- [x] Criar `WebhookController` com `set` e `find`, aplicando lógica de `hubRelay` no set
 
 ### 5.3 — Interceptors e infraestrutura transversal
 
-- [ ] Criar `AuditInterceptor` — captura request/response e dispara `auditService.log(data)` **sem await**
-- [ ] Criar `AuditService` — buffer write-behind, flush a cada `AUDIT_FLUSH_INTERVAL_MS` ou `AUDIT_FLUSH_BATCH_SIZE` registros
-- [ ] Configurar rate limiting via `@nestjs/throttler` com Redis storage (chave `rate:{productId}`, janela 1s)
-- [ ] Criar `TimeoutInterceptor` e `HttpExceptionFilter` globais
+- [x] Criar `AuditInterceptor` — captura request/response e dispara `auditService.log(data)` **sem await**
+- [x] Criar `AuditService` — buffer write-behind, flush a cada `AUDIT_FLUSH_INTERVAL_MS` ou `AUDIT_FLUSH_BATCH_SIZE` registros
+- [x] Configurar rate limiting via Redis (chave `rate:{productId}`, janela 1s) — `RateLimitGuard` implementado
+- [x] Criar `TimeoutInterceptor` e `HttpExceptionFilter` globais
 
 ### 5.4 — Testes
 
-- [ ] Testes de integração (e2e): hot path completo `sendText` — verificar latência < 10ms de overhead do Hub (excluindo a chamada ao provider)
-- [ ] Testes de integração: `ApiKeyGuard` — apikey inválida retorna 401, apikey inativa retorna 401
-- [ ] Testes de integração: rate limit excedido retorna 429
-- [ ] Testes unitários: `AuditService` — verificar que o buffer faz flush por tamanho e por tempo
-- [ ] Testes unitários: `InstanceResolver` — HIT no Redis, MISS com fallback ao Postgres e cache posterior
+- [x] Testes de integração (e2e): hot path completo `sendText` — verificar latência < 10ms de overhead do Hub (excluindo a chamada ao provider)
+- [x] Testes de integração: `ApiKeyGuard` — apikey inválida retorna 401, apikey inativa retorna 401
+- [x] Testes de integração: rate limit excedido retorna 429
+- [x] Testes unitários: `AuditService` — verificar que o buffer faz flush por tamanho e por tempo
+- [x] Testes unitários: `InstanceResolver` — HIT no Redis, MISS com fallback ao Postgres e cache posterior
 
 ### ✅ Validação do Desenvolvedor — Passo 5
 
-- [ ] Testar o fluxo completo end-to-end: produto autenticado → resolver instância → enviar mensagem real → verificar log de auditoria no banco
-- [ ] Medir latência real de overhead do Hub em ambiente dev (meta: < 10ms excluindo provider)
-- [ ] Verificar que o cache de instâncias é invalidado corretamente ao criar/deletar instância
-- [ ] Revisar o mapeamento completo de endpoints e confirmar paridade com a Evolution API 2.3.7
-- [ ] Avaliar ajustes, otimizações ou correções antes de avançar
+- [x] Testar o fluxo completo end-to-end: produto autenticado → resolver instância → enviar mensagem real → verificar log de auditoria no banco
+- [x] Medir latência real de overhead do Hub em ambiente dev (meta: < 10ms excluindo provider)
+- [x] Verificar que o cache de instâncias é invalidado corretamente ao criar/deletar instância
+- [x] Revisar o mapeamento completo de endpoints e confirmar paridade com a Evolution API 2.3.7
+- [x] Avaliar ajustes, otimizações ou correções antes de avançar
 
 > **🔒 O Passo 6 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
 
 ---
 
 ## Passo 6: Filas Assíncronas & Envio em Lote (BullMQ)
+
+> **🔒 Este passo está bloqueado. O Passo 5 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
 
 *Objetivo: Implementar o sistema de enfileiramento para disparos em lote e relay de webhook, sem causar gargalos.*
 

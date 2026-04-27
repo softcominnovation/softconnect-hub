@@ -724,7 +724,7 @@ maintenance_work_mem = 512MB
 
 **Redis** (`redis.conf`):
 ```
-maxmemory 256mb
+maxmemory 512mb
 maxmemory-policy allkeys-lru
 appendonly yes                  # persistência dos jobs BullMQ em restarts
 ```

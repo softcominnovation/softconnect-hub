@@ -32,6 +32,14 @@ export class CacheService implements OnModuleDestroy {
     await this.client.del(key);
   }
 
+  async increment(key: string, by = 1): Promise<number> {
+    return this.client.incrby(key, by);
+  }
+
+  async expire(key: string, ttlSeconds: number): Promise<void> {
+    await this.client.expire(key, ttlSeconds);
+  }
+
   onModuleDestroy() {
     this.client.disconnect();
   }

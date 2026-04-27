@@ -7,8 +7,8 @@
 ## Contexto da Sessão ou fase
 
 **Projeto:** SoftConnect 2.0
-**Etapa atual:** Passo 4 — Implementação do EvolutionAdapter (implementado — aguardando gate)
-**Objetivo desta sessão:** Passo X implementado integralmente (testes passando). Aguardando gate de validação do desenvolvedor para Passo 5.
+**Etapa atual:** Passo 5 — Controllers do Data Plane (implementado — aguardando gate de validação)
+**Objetivo desta sessão:** Passo 5 implementado integralmente (74 testes passando). Aguardando gate de validação do desenvolvedor.
 
 ---
 
@@ -30,12 +30,12 @@ Leia os seguintes arquivos integralmente, nesta ordem, antes de responder:
 Esta etapa está concluída e aguardando gate de validação. Antes de qualquer outra ação, aplique o protocolo de revisão definido em `docs/REVIEW-INSTRUCTIONS.md` com os seguintes parâmetros:
 
 ```
-
-ETAPA ATUAL    : Passo 4 — Implementação do EvolutionAdapter
-ETAPA ANTERIOR : Passo 3 — Dynamic Adapters & Adapter Registry (gate aprovado)
-ETAPA ANTERIOR : Passo 2 — Admin Plane & Segurança (gate aprovado)
-ETAPA ANTERIOR : Passo 1 — Fundações da Infraestrutura (gate aprovado)
-ETAPA ANTERIOR : Passo 0 — Pipeline CI/CD (gate aprovado)
+ETAPA ATUAL    : Passo 5  Controllers do Data Plane
+ETAPA ANTERIOR : Passo 4  Implementação do EvolutionAdapter (gate aprovado)
+ETAPA ANTERIOR : Passo 3  Dynamic Adapters & Adapter Registry (gate aprovado)
+ETAPA ANTERIOR : Passo 2  Admin Plane & Segurança (gate aprovado)
+ETAPA ANTERIOR : Passo 1  Fundações da Infraestrutura (gate aprovado)
+ETAPA ANTERIOR : Passo 0  Pipeline CI/CD (gate aprovado)
 ```
 
 ---
@@ -48,8 +48,9 @@ ETAPA ANTERIOR : Passo 0 — Pipeline CI/CD (gate aprovado)
 - [x] O Passo 1 está com gate de validação aprovado ✔
 - [x] O Passo 2 está com gate de validação aprovado ✔
 - [x] O Passo 3 está com gate de validação aprovado ✔
-- [x] O Passo 2.5 está implementado — aguardando gate de validação do desenvolvedor
-- [x] O Passo 4 está implementado — aguardando gate de validação do desenvolvedor
+- [x] O Passo 2.5 está com gate de validação aprovado ✔
+- [x] O Passo 4 está com gate de validação aprovado ✔
+- [ ] O Passo 5 está implementado  aguardando gate de validação do desenvolvedor
 - [ ] Não avançar para o Passo 5 sem que o desenvolvedor marque os gates e solicite explicitamente o avanço
 
 Se qualquer inconsistência for encontrada na revisão, reporte antes de sugerir qualquer ação.
