@@ -27,12 +27,16 @@
 | **Passo 0** — Pipeline CI/CD | ✅ **100% Concluído** |
 | **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído — Gate de validação aprovado** |
-| **Passo 2.5** — Dashboard Auth & Usuários Admin | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 2.5** — Dashboard Auth & Usuários Admin | ⏳ **Implementado — Aguardando gate de validação** |
 | **Passo 3** — Dynamic Adapters & Adapter Registry | ✅ **100% Concluído — Gate de validação aprovado** |
-| **Passo 4** — Implementação do EvolutionAdapter | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 4** — Implementação do EvolutionAdapter | ⏳ **Implementado — Aguardando gate de validação** |
 | **Swagger (incremental)** — Admin API + tipagem completa | ✅ **Implementado — rotas admin com schemas, params e query docs** |
-| **Global prefix `/api/v1`** — todas as rotas da API | ✅ **Implementado — `app.setGlobalPrefix('api/v1')` em `main.ts` e `app.helper.ts`** |
-| Passos 5 em diante | 🔒 Bloqueados até aprovação do Passo 4 |
+| **Global prefix `/api/v1`** — todas as rotas da API | ✅ **Implementado — `app.setGlobalPrefix('api/v1')` em `main.ts`** |
+| **Passo 5** — Controllers do Data Plane | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 5.5** — Correções de Contrato & Novos Módulos (sessão 24/04) | ✅ **Aplicado — 91/91 testes, build limpo** |
+| **Passo 5.6** — Migração para ID-Based Routing no Data Plane | ✅ **Implementado — aguardando gate de validação** |
+| **Passo 6** — Filas Assíncronas & Envio em Lote (BullMQ) | ⏳ **Implementado — aguardando gate do Passo 5.6** |
+| Passos 7 em diante | 🔒 Bloqueados até aprovação do Passo 6 |
 
 ---
 
@@ -72,6 +76,9 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 ### ✅ Validação do Desenvolvedor — Passo 0
 
 - [x] **Gate concluído.** Pipeline validado end-to-end. Passo 0 aprovado para continuidade.
+
+> 📄 Tutorial CI/CD completo: `docs/softconnect-cicd-tutorial.html`
+> 📄 Tutorial de versionamento Docker: `docs/softconnect-docker-versioning-tutorial.html`
 
 ---
 
@@ -281,45 +288,190 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 - [x] Revisar o mapeamento completo de endpoints e confirmar paridade com a Evolution API 2.3.7
 - [x] Avaliar ajustes, otimizações ou correções antes de avançar
 
-> **🔒 O Passo 6 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
+---
+
+## Passo 5.5: Correções de Contrato & Novos Módulos
+
+*Objetivo: Alinhar todos os endpoints e contratos do Data Plane à Evolution API 2.3.7, adicionar novos módulos Settings e Proxy, reestruturar o batch e corrigir o formato do webhook.*
+
+### 5.5.1 — Remoção de endpoints descontinuados
+
+- [x] Remover `sendWhatsAppAudio`, `sendButtons`, `sendLocation`, `sendContact`, `sendReaction` da interface `WhatsAppProvider`
+- [x] Remover os 5 métodos do `EvolutionAdapter`
+- [x] Remover os 5 métodos do `MessageService`
+- [x] Remover os 5 endpoints do `MessageController` e seus DTOs correspondentes (`SendAudioDto`, `SendButtonsDto`, `SendLocationDto`, `SendContactDto`, `SendReactionDto`)
+
+### 5.5.2 — Novos endpoints de mensagem
+
+- [x] Adicionar `sendDocument` (mapeia para `/message/sendMedia` com `mediatype: 'document'` injetado)
+- [x] Adicionar `sendSticker` (mapeia para `/message/sendSticker`)
+- [x] Adicionar `sendPresence` (mapeia para `/message/sendPresence`)
+- [x] Criar DTOs: `SendDocumentDto`, `SendStickerDto`, `SendPresenceDto` com `@ApiProperty`
+
+### 5.5.3 — GET `/instance/:instanceName`
+
+- [x] Adicionar endpoint `GET /instance/:instanceName` no `InstanceController`
+- [x] Adicionar método `fetchInstance` no `InstanceService` e no `EvolutionAdapter`
+- [x] Adapter mapeia para `GET /instance/fetchInstances?instanceName={name}`
+
+### 5.5.4 — Reestruturação do batch
+
+- [x] Criar `MessageBatchController` em `@Controller('message/batch')` (mesmo arquivo do `MessageController`)
+- [x] Endpoints: `POST send-text/:instance`, `POST send-media/:instance`, `POST send-document/:instance`, `GET :jobId/status`, `DELETE :jobId`
+- [x] Registrar `MessageBatchController` no `MessageModule`
+- [x] Adicionar `sendBatchMedia`, `sendBatchDocument`, `deleteBatch` no `MessageService`
+- [x] Criar DTOs: `SendBatchMediaDto`, `SendBatchDocumentDto`
+- [x] Generalizar `BatchProducer.addJobs` para `messages: unknown[]` (suporte a qualquer tipo de mensagem)
+
+### 5.5.5 — Correção do formato do Webhook
+
+- [x] Corrigir `SetWebhookDto` para formato Evolution: `{ webhook: { enabled, url, headers?, byEvents?, base64?, events? } }`
+- [x] Criar `WebhookPayloadDto` e `ToggleWebhookDto`
+- [x] Adicionar `POST /webhook/toggle/:instance` no `WebhookController`
+- [x] Atualizar `WebhookService.setWebhook` para o novo formato de DTO (incluindo a lógica de `hubRelay`)
+- [x] Adicionar `toggleWebhook` no `WebhookService` e `EvolutionAdapter`
+- [x] Adicionar `toggleWebhook` na interface `WhatsAppProvider`
+
+### 5.5.6 — Módulo Settings
+
+- [x] Criar `src/settings/` com `settings.controller.ts`, `settings.service.ts`, `dto/settings.dto.ts`, `settings.module.ts`
+- [x] Endpoints: `POST /settings/set/:instance`, `GET /settings/find/:instance`
+- [x] Registrar `SettingsModule` no `AppModule`
+
+### 5.5.7 — Módulo Proxy
+
+- [x] Criar `src/proxy/` com `proxy.controller.ts`, `proxy.service.ts`, `dto/proxy.dto.ts`, `proxy.module.ts`
+- [x] Endpoints: `POST /proxy/set/:instance`, `GET /proxy/find/:instance`
+- [x] Registrar `ProxyModule` no `AppModule`
+
+### 5.5.8 — Testes e validação
+
+- [x] Atualizar `evolution.adapter.spec.ts` — remover testes dos 5 métodos extintos, adicionar testes para `sendDocument`, `sendSticker`, `sendPresence`, `fetchInstance`, `setWebhook` (novo formato)
+- [x] Build limpo: `EXIT:0`
+- [x] Todos os testes passando: **91/91**
+
+### ✅ Validação do Desenvolvedor — Passo 5.5
+
+- [x] Testar `GET /api/v1/instance/:instanceName` com uma instância real
+- [x] Testar os endpoints de settings e proxy com uma instância real
+- [x] Confirmar que o formato do webhook `{ webhook: {...} }` é aceito pelo provider
+- [x] Verificar que os 3 novos endpoints de batch funcionam corretamente (`send-text`, `send-media`, `send-document`)
+- [x] Acessar `/docs/data` e confirmar que as novas tags `Settings`, `Proxy` e `Messages (Batch)` aparecem
+
+---
+
+## Passo 5.6: Migração para ID-Based Routing no Data Plane
+
+*Objetivo: Substituir `instanceName` por `instanceId` (UUID do Hub) como parâmetro de rota em todos os endpoints do data plane. Adicionar constraint de unicidade `@@unique([productId, instanceName])` no schema. Squash das migrations existentes.*
+
+> Spec detalhada: `ignored-docs/passo56-id-routing-spec.md`  
+> Documentação de decisões: `ignored-docs/decisoes-e-estado-final.html`
+
+### 5.6.1 — Schema e Migrations
+
+- [x] Adicionar `@@unique([productId, instanceName])` no model `Instance` em `prisma/schema.prisma`
+- [x] Deletar as duas migrations existentes (`20260416170815_init_complete` e `20260422000000_add_admin_users_and_activity_log`)
+- [x] Executar `npx prisma migrate reset --force` (dev — apaga dados locais)
+- [x] Executar `npx prisma migrate dev --name init_v2_id_routing` para criar a migration consolidada
+- [x] Executar `npx prisma generate`
+
+### 5.6.2 — InstanceResolverService
+
+- [x] Adicionar campo `instanceName: string` à interface `ResolvedInstance`
+- [x] Adicionar método `resolveById(productId: string, instanceId: string): Promise<ResolvedInstance>` com cache key `instance:{instanceId}` e filtro `{ id: instanceId, productId, isActive: true }`
+- [x] Atualizar método `resolve` existente para também usar cache key `instance:{id}` (unificar chave)
+- [x] Atualizar toda invalidação de cache para `del instance:{instanceId}`
+
+### 5.6.3 — InstanceController + InstanceService
+
+- [x] Reestruturar rotas para padrão `/:instanceId/ação` (ver spec para ordem de declaração)
+- [x] Renomear `GET /instance/fetchInstances` → `GET /instance/list`
+- [x] `POST /instance/create` retorna `id` (UUID Hub) na resposta
+- [x] `GET /instance/list` inclui `id` em cada item da resposta
+- [x] Todos os métodos do service: `instanceName` → `instanceId` + chamar `resolveById`
+- [x] Invalidação de cache usa `instance:{instanceId}`
+
+### 5.6.4 — MessageController + MessageService
+
+- [x] Substituir `:instance` por `:instanceId` em todos os 9 endpoints
+- [x] `ctx()` privado passa a chamar `resolveById` e retorna `instanceName` para o adapter
+
+### 5.6.5 — WebhookController + WebhookService
+
+- [x] Substituir `:instance` por `:instanceId` nos 3 endpoints
+- [x] Service chama `resolveById`, passa `instanceName` ao adapter
+
+### 5.6.6 — ChatController + ChatService
+
+- [x] Substituir `:instance` por `:instanceId` nos 4 endpoints
+- [x] Service chama `resolveById`, passa `instanceName` ao adapter
+
+### 5.6.7 — SettingsController + SettingsService
+
+- [x] Substituir `:instance` por `:instanceId` nos 2 endpoints
+- [x] Service chama `resolveById`
+
+### 5.6.8 — ProxyController + ProxyService
+
+- [x] Substituir `:instance` por `:instanceId` nos 2 endpoints
+- [x] Service chama `resolveById`
+
+### 5.6.9 — BatchProducer
+
+- [x] Verificar/garantir que o producer chama `resolveById` e persiste `instanceName` no payload de cada job BullMQ (worker recebe nome pronto — zero resolução adicional por mensagem)
+
+### 5.6.10 — Testes
+
+- [x] Atualizar/criar testes para `resolveById` — cache HIT, cache MISS, NotFoundException quando `productId` não bate
+- [x] Atualizar testes de instance, message e chat service para usar `instanceId` nos mocks
+- [x] Build limpo: `EXIT:0`
+- [x] Todos os testes passando (95/95)
+
+### ✅ Validação do Desenvolvedor — Passo 5.6
+
+- [x] Confirmar que `GET /api/v1/instance/create` retorna `id` no objeto de resposta
+- [x] Confirmar que `GET /api/v1/instance/list` retorna `id` em cada instância
+- [x] Testar `GET /api/v1/instance/:instanceId/connect` com o UUID retornado pelo create
+- [x] Testar `POST /api/v1/message/sendText/:instanceId` com o UUID — mensagem deve ser enviada corretamente
+- [x] Confirmar que passar UUID de instância de outro produto retorna 404 (isolamento por produto)
+- [x] Confirmar que a migration `init_v2_id_routing` foi aplicada limpa no banco dev
+
+> **🔒 O gate de validação do Passo 6 só pode ser aprovado após este passo estar concluído.**
 
 ---
 
 ## Passo 6: Filas Assíncronas & Envio em Lote (BullMQ)
 
-> **🔒 Este passo está bloqueado. O Passo 5 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
-
 *Objetivo: Implementar o sistema de enfileiramento para disparos em lote e relay de webhook, sem causar gargalos.*
 
 ### 6.1 — Setup BullMQ
 
-- [ ] Instalar e configurar BullMQ conectado ao Redis existente
-- [ ] Criar `BullMQ Module` integrado ao `app.module.ts`
+- [x] Instalar e configurar BullMQ conectado ao Redis existente
+- [x] Criar `BullMQ Module` integrado ao `app.module.ts`
 
 ### 6.2 — Batch (envio em lote)
 
-- [ ] Criar `BatchProducer` — publica N jobs no BullMQ com `{ batchJobId, adapterType, instanceName, providerUrl, providerApiKey, message, delayMs }` no payload de cada job
-- [ ] Criar `BatchWorker` — consome jobs, resolve adapter via registry, chama `adapter.sendText(ctx, ...)`, jobs falhos vão para DLQ
-- [ ] Implementar `POST /message/sendText/{instance}/batch`:
+- [x] Criar `BatchProducer` — publica N jobs no BullMQ com `{ batchJobId, adapterType, instanceName, providerUrl, providerApiKey, message, delayMs }` no payload de cada job
+- [x] Criar `BatchWorker` — consome jobs, resolve adapter via registry, chama `adapter.sendText(ctx, ...)`, jobs falhos vão para DLQ
+- [x] Implementar `POST /message/sendText/{instance}/batch`:
   - Inserir 1 linha em `BatchJob` no Postgres com `status: 'processing'` e `totalMessages: N`
   - Publicar N jobs no BullMQ
   - Retornar `{ batchJobId }` imediatamente ao cliente
-- [ ] Implementar handler do evento `'drained'` do BullMQ — executar **1 único UPDATE** no Postgres: `sentCount`, `failedCount`, `status: 'completed'`, `completedAt`
-- [ ] Implementar `GET /message/batch/{batchJobId}/status` — ler `BatchJob` do Postgres (não do Redis)
+- [x] Implementar handler de finalização via contadores Redis — executar **1 único UPDATE** no Postgres: `sentCount`, `failedCount`, `status: 'completed'`, `completedAt`
+- [x] Implementar `GET /message/batch/{batchJobId}/status` — ler `BatchJob` do Postgres (não do Redis)
 
 ### 6.3 — Relay assíncrono de webhook (`hub_relay`)
 
-- [ ] Criar `InternalWebhookController` — `POST /internal/webhook/{adapterType}` com `IpWhitelistGuard`
+- [x] Criar `InternalWebhookController` — `POST /internal/webhook/{adapterType}` com `IpWhitelistGuard`
   - Responde 200 imediatamente ao provider
   - Publica job no BullMQ (relay queue)
-- [ ] Criar `RelayWorker` — busca `WebhookConfig` do produto, assina HMAC-SHA256, entrega ao produto com retry automático por BullMQ
+- [x] Criar `RelayWorker` — busca `WebhookConfig` do produto, assina HMAC-SHA256, entrega ao produto com retry automático por BullMQ
 
 ### 6.4 — Testes
 
-- [ ] Testes de integração: disparar um lote de 5 mensagens e verificar que o `BatchJob` no Postgres tem `status: 'completed'` ao final com `sentCount` e `failedCount` corretos
-- [ ] Testes de integração: simular falha em 2 mensagens do lote e verificar `failedCount = 2` no `BatchJob`
-- [ ] Testes unitários: `BatchProducer` — verificar que `batchJobId` está presente no payload de cada job
-- [ ] Testes unitários: `RelayWorker` — verificar que a assinatura HMAC-SHA256 é gerada corretamente
+- [x] Testes unitários: `BatchProducer` — verificar que `batchJobId` está presente no payload de cada job
+- [x] Testes unitários: `BatchWorker` — sucesso incrementa sent, falha incrementa failed, finalização atualiza Postgres
+- [x] Testes unitários: `RelayWorker` — verificar que a assinatura HMAC-SHA256 é gerada corretamente
 
 ### ✅ Validação do Desenvolvedor — Passo 6
 
@@ -334,6 +486,8 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 ---
 
 ## Passo 7: Webhooks Completos e Health Check
+
+> **🔒 Este passo está bloqueado. O Passo 6 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
 
 *Objetivo: Finalizar o sistema de webhook pass-through, circuit breaker e monitoramento proativo de VPS.*
 
@@ -359,19 +513,21 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 
 ---
 
-## Passo 8: Documentação Swagger / OpenAPI
+## Passo 8: Revisão e Refinamento da Documentação OpenAPI
 
-*Objetivo: Gerar documentação interativa da API automaticamente a partir dos decorators do NestJS.*
+*Objetivo: Garantir que toda a API esteja completamente documentada com schemas de request/response, exemplos e descrições precisas.*
 
-- [ ] Instalar `@nestjs/swagger` e `swagger-ui-fastify`
-- [ ] Configurar `SwaggerModule` no `main.ts` com título, versão e bearer auth
-- [ ] Adicionar `@ApiTags`, `@ApiOperation`, `@ApiResponse` em todos os controllers
-- [ ] Criar DTOs com `@ApiProperty` para documentação automática de request/response
-- [ ] Expor documentação em `/docs` (disponível apenas em ambiente não-produção ou com auth básica)
+> **Nota:** A infraestrutura do Swagger (`@nestjs/swagger`, `SwaggerModule`, rotas `/docs` e `/docs/data`) foi implementada incrementalmente nos Passos 2–5. Este passo é de **revisão e enriquecimento**, não de instalação.
+
+- [ ] Adicionar `@ApiProperty` em todos os DTOs do Data Plane com exemplos e descrições
+- [ ] Revisar `@ApiResponse` em todos os controllers — garantir schemas de resposta documentados para 200, 400, 401, 404, 429
+- [ ] Confirmar que `/docs` exibe apenas rotas Admin e `/docs/data` exibe apenas rotas Data Plane
+- [ ] Verificar que o Swagger UI está acessível em ambiente de homologação (dev branch)
 
 ### ✅ Validação do Desenvolvedor — Passo 8
 
-- [ ] Acessar `/docs` e verificar que todos os endpoints estão documentados
+- [ ] Acessar `/docs/admin` e confirmar que apenas rotas `/admin/*` aparecem, sem nenhuma rota de Data Plane
+- [ ] Acessar `/docs/data` e confirmar que apenas rotas de instância, mensagem, chat e webhook aparecem, sem rotas Admin
 - [ ] Confirmar que os DTOs com `@ApiProperty` cobrem todos os campos relevantes de request e response
 - [ ] Testar um endpoint diretamente pelo Swagger UI e confirmar funcionamento
 

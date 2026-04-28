@@ -68,6 +68,7 @@ model Instance {
   batchJobs BatchJob[]
 
   @@unique([vpsId, instanceName])
+  @@unique([productId, instanceName])
 }
 
 model WebhookConfig {
@@ -147,4 +148,3 @@ model BatchJob {
   product  Product   @relation(fields: [productId], references: [id])
   instance Instance? @relation(fields: [instanceId], references: [id])
 }
-

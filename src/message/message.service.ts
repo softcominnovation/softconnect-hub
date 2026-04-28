@@ -1,34 +1,47 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { AuthCachePayload } from '../auth/apikey.guard';
+import { PrismaService } from '../prisma/prisma.service';
 import { AdapterResolverService } from '../providers/adapter-resolver.service';
 import type {
   MessageResponseDto,
   ProviderContext,
-  SendAudioDto,
-  SendButtonsDto,
-  SendContactDto,
+  SendDocumentDto,
   SendListDto,
-  SendLocationDto,
   SendMediaDto,
-  SendReactionDto,
+  SendPresenceDto,
+  SendStickerDto,
   SendTextDto,
 } from '../providers/whatsapp-provider.interface';
+import { BatchProducer } from '../queue/batch.producer';
 import { InstanceResolverService } from '../resolver/instance.resolver';
+import type { SendBatchDocumentDto, SendBatchDto, SendBatchMediaDto } from './dto/message.dto';
+
+export interface BatchStatusDto {
+  id: string;
+  status: string;
+  totalMessages: number;
+  sentCount: number;
+  failedCount: number;
+  createdAt: Date;
+  completedAt: Date | null;
+}
 
 @Injectable()
 export class MessageService {
   constructor(
     private readonly adapterResolver: AdapterResolverService,
     private readonly instanceResolver: InstanceResolverService,
+    private readonly prisma: PrismaService,
+    private readonly batchProducer: BatchProducer,
   ) {}
 
   private async ctx(
     product: AuthCachePayload,
-    instanceName: string,
-  ): Promise<{ ctx: ProviderContext; adapterType: string }> {
-    const resolved = await this.instanceResolver.resolve(
+    instanceId: string,
+  ): Promise<{ ctx: ProviderContext; adapterType: string; instanceName: string }> {
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     return {
       ctx: {
@@ -36,86 +49,188 @@ export class MessageService {
         providerApiKey: resolved.providerApiKey,
       },
       adapterType: resolved.adapterType,
+      instanceName: resolved.instanceName,
     };
   }
 
   async sendText(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: SendTextDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendText(ctx, instanceName, dto);
   }
 
   async sendMedia(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: SendMediaDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendMedia(ctx, instanceName, dto);
   }
 
-  async sendWhatsAppAudio(
-    product: AuthCachePayload,
-    instanceName: string,
-    dto: SendAudioDto,
-  ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
-    const adapter = this.adapterResolver.resolve(adapterType);
-    return adapter.sendWhatsAppAudio(ctx, instanceName, dto);
-  }
-
-  async sendButtons(
-    product: AuthCachePayload,
-    instanceName: string,
-    dto: SendButtonsDto,
-  ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
-    const adapter = this.adapterResolver.resolve(adapterType);
-    return adapter.sendButtons(ctx, instanceName, dto);
-  }
-
   async sendList(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: SendListDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendList(ctx, instanceName, dto);
   }
 
-  async sendLocation(
+  async sendDocument(
     product: AuthCachePayload,
-    instanceName: string,
-    dto: SendLocationDto,
+    instanceId: string,
+    dto: SendDocumentDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
-    return adapter.sendLocation(ctx, instanceName, dto);
+    return adapter.sendDocument(ctx, instanceName, dto);
   }
 
-  async sendContact(
+  async sendSticker(
     product: AuthCachePayload,
-    instanceName: string,
-    dto: SendContactDto,
+    instanceId: string,
+    dto: SendStickerDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
-    return adapter.sendContact(ctx, instanceName, dto);
+    return adapter.sendSticker(ctx, instanceName, dto);
   }
 
-  async sendReaction(
+  async sendPresence(
     product: AuthCachePayload,
-    instanceName: string,
-    dto: SendReactionDto,
-  ): Promise<MessageResponseDto> {
-    const { ctx, adapterType } = await this.ctx(product, instanceName);
+    instanceId: string,
+    dto: SendPresenceDto,
+  ): Promise<void> {
+    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
-    return adapter.sendReaction(ctx, instanceName, dto);
+    return adapter.sendPresence(ctx, instanceName, dto);
+  }
+
+  async sendBatchMedia(
+    product: AuthCachePayload,
+    instanceId: string,
+    dto: SendBatchMediaDto,
+  ): Promise<{ batchJobId: string }> {
+    const resolved = await this.instanceResolver.resolveById(product.productId, instanceId);
+    const batchJob = await this.prisma.batchJob.create({
+      data: {
+        productId: product.productId,
+        instanceId: resolved.instanceId,
+        totalMessages: dto.messages.length,
+        status: 'processing',
+      },
+    });
+    await this.batchProducer.addJobs(
+      batchJob.id,
+      product.productId,
+      resolved.adapterType,
+      resolved.instanceName,
+      resolved.providerUrl,
+      resolved.providerApiKey,
+      dto.messages,
+      dto.delayMs,
+    );
+    return { batchJobId: batchJob.id };
+  }
+
+  async sendBatchDocument(
+    product: AuthCachePayload,
+    instanceId: string,
+    dto: SendBatchDocumentDto,
+  ): Promise<{ batchJobId: string }> {
+    const resolved = await this.instanceResolver.resolveById(product.productId, instanceId);
+    const batchJob = await this.prisma.batchJob.create({
+      data: {
+        productId: product.productId,
+        instanceId: resolved.instanceId,
+        totalMessages: dto.messages.length,
+        status: 'processing',
+      },
+    });
+    await this.batchProducer.addJobs(
+      batchJob.id,
+      product.productId,
+      resolved.adapterType,
+      resolved.instanceName,
+      resolved.providerUrl,
+      resolved.providerApiKey,
+      dto.messages,
+      dto.delayMs,
+    );
+    return { batchJobId: batchJob.id };
+  }
+
+  async deleteBatch(product: AuthCachePayload, batchJobId: string): Promise<void> {
+    const job = await this.prisma.batchJob.findFirst({
+      where: { id: batchJobId, productId: product.productId },
+    });
+    if (!job) {
+      throw new NotFoundException(`BatchJob "${batchJobId}" não encontrado`);
+    }
+    await this.prisma.batchJob.delete({ where: { id: batchJobId } });
+  }
+
+  async sendBatch(
+    product: AuthCachePayload,
+    instanceId: string,
+    dto: SendBatchDto,
+  ): Promise<{ batchJobId: string }> {
+    const resolved = await this.instanceResolver.resolveById(
+      product.productId,
+      instanceId,
+    );
+
+    const batchJob = await this.prisma.batchJob.create({
+      data: {
+        productId: product.productId,
+        instanceId: resolved.instanceId,
+        totalMessages: dto.messages.length,
+        status: 'processing',
+      },
+    });
+
+    await this.batchProducer.addJobs(
+      batchJob.id,
+      product.productId,
+      resolved.adapterType,
+      resolved.instanceName,
+      resolved.providerUrl,
+      resolved.providerApiKey,
+      dto.messages,
+      dto.delayMs,
+    );
+
+    return { batchJobId: batchJob.id };
+  }
+
+  async getBatchStatus(
+    product: AuthCachePayload,
+    batchJobId: string,
+  ): Promise<BatchStatusDto> {
+    const job = await this.prisma.batchJob.findFirst({
+      where: { id: batchJobId, productId: product.productId },
+      select: {
+        id: true,
+        status: true,
+        totalMessages: true,
+        sentCount: true,
+        failedCount: true,
+        createdAt: true,
+        completedAt: true,
+      },
+    });
+
+    if (!job) {
+      throw new NotFoundException(`BatchJob "${batchJobId}" não encontrado`);
+    }
+
+    return job;
   }
 }

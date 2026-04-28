@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { VpsServer } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { decryptAES256GCM, encryptAES256GCM } from '../../common/crypto.util';
@@ -21,23 +22,30 @@ export class VpsService {
   async create(dto: CreateVpsDto): Promise<DecryptedVps> {
     const key = this.encryptionKey;
 
-    const vps = await this.prisma.vpsServer.create({
-      data: {
-        label: dto.label,
-        subdomain: dto.subdomain,
-        ip: dto.ip,
-        providerUrl: dto.providerUrl,
-        providerApiKey: encryptAES256GCM(dto.providerApiKey, key),
-        adapterType: dto.adapterType ?? 'evolution',
-        managerType: dto.managerType ?? null,
-        managerUrl: dto.managerUrl ?? null,
-        managerApiKey: dto.managerApiKey
-          ? encryptAES256GCM(dto.managerApiKey, key)
-          : null,
-      },
-    });
+    try {
+      const vps = await this.prisma.vpsServer.create({
+        data: {
+          label: dto.label,
+          subdomain: dto.subdomain,
+          ip: dto.ip,
+          providerUrl: dto.providerUrl,
+          providerApiKey: encryptAES256GCM(dto.providerApiKey, key),
+          adapterType: dto.adapterType ?? 'evolution',
+          managerType: dto.managerType ?? null,
+          managerUrl: dto.managerUrl ?? null,
+          managerApiKey: dto.managerApiKey
+            ? encryptAES256GCM(dto.managerApiKey, key)
+            : null,
+        },
+      });
 
-    return this.decrypt(vps);
+      return this.decrypt(vps);
+    } catch (err) {
+      if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException('A VPS with this subdomain already exists');
+      }
+      throw err;
+    }
   }
 
   async findAll(): Promise<DecryptedVps[]> {

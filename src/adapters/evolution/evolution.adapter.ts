@@ -15,15 +15,18 @@ import {
   MessageDto,
   MessageResponseDto,
   ProviderContext,
-  SendAudioDto,
-  SendButtonsDto,
-  SendContactDto,
+  ProxyDto,
+  SendDocumentDto,
   SendListDto,
-  SendLocationDto,
   SendMediaDto,
-  SendReactionDto,
+  SendPresenceDto,
+  SendStickerDto,
   SendTextDto,
+  SetProxyDto,
+  SetSettingsDto,
   SetWebhookDto,
+  SettingsDto,
+  ToggleWebhookDto,
   WebhookDto,
   WhatsAppProvider,
 } from '../../providers/whatsapp-provider.interface';
@@ -42,7 +45,7 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerUrl,
       ctx.providerApiKey,
       '/instance/create',
-      dto,
+      { ...dto, integration: dto.integration ?? 'WHATSAPP-BAILEYS' },
     );
   }
 
@@ -52,6 +55,17 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerUrl,
       ctx.providerApiKey,
       '/instance/fetchInstances',
+    );
+  }
+
+  fetchInstance(ctx: ProviderContext, instanceName: string): Promise<InstanceDto> {
+    return this.http.request(
+      'get',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      '/instance/fetchInstances',
+      undefined,
+      { instanceName },
     );
   }
 
@@ -143,30 +157,30 @@ export class EvolutionAdapter implements WhatsAppProvider {
     );
   }
 
-  sendWhatsAppAudio(
+  sendDocument(
     ctx: ProviderContext,
     instanceName: string,
-    dto: SendAudioDto,
+    dto: SendDocumentDto,
   ): Promise<MessageResponseDto> {
     return this.http.request(
       'post',
       ctx.providerUrl,
       ctx.providerApiKey,
-      `/message/sendWhatsAppAudio/${instanceName}`,
-      dto,
+      `/message/sendMedia/${instanceName}`,
+      { ...dto, mediatype: 'document' },
     );
   }
 
-  sendButtons(
+  sendSticker(
     ctx: ProviderContext,
     instanceName: string,
-    dto: SendButtonsDto,
+    dto: SendStickerDto,
   ): Promise<MessageResponseDto> {
     return this.http.request(
       'post',
       ctx.providerUrl,
       ctx.providerApiKey,
-      `/message/sendButtons/${instanceName}`,
+      `/message/sendSticker/${instanceName}`,
       dto,
     );
   }
@@ -185,44 +199,16 @@ export class EvolutionAdapter implements WhatsAppProvider {
     );
   }
 
-  sendLocation(
+  async sendPresence(
     ctx: ProviderContext,
     instanceName: string,
-    dto: SendLocationDto,
-  ): Promise<MessageResponseDto> {
-    return this.http.request(
+    dto: SendPresenceDto,
+  ): Promise<void> {
+    await this.http.request(
       'post',
       ctx.providerUrl,
       ctx.providerApiKey,
-      `/message/sendLocation/${instanceName}`,
-      dto,
-    );
-  }
-
-  sendContact(
-    ctx: ProviderContext,
-    instanceName: string,
-    dto: SendContactDto,
-  ): Promise<MessageResponseDto> {
-    return this.http.request(
-      'post',
-      ctx.providerUrl,
-      ctx.providerApiKey,
-      `/message/sendContact/${instanceName}`,
-      dto,
-    );
-  }
-
-  sendReaction(
-    ctx: ProviderContext,
-    instanceName: string,
-    dto: SendReactionDto,
-  ): Promise<MessageResponseDto> {
-    return this.http.request(
-      'post',
-      ctx.providerUrl,
-      ctx.providerApiKey,
-      `/message/sendReaction/${instanceName}`,
+      `/message/sendPresence/${instanceName}`,
       dto,
     );
   }
@@ -303,6 +289,70 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerUrl,
       ctx.providerApiKey,
       `/webhook/find/${instanceName}`,
+    );
+  }
+
+  async toggleWebhook(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: ToggleWebhookDto,
+  ): Promise<void> {
+    const current = await this.findWebhook(ctx, instanceName);
+    const updated: SetWebhookDto = {
+      webhook: { ...current.webhook, enabled: dto.enabled },
+    };
+    await this.http.request(
+      'post',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      `/webhook/set/${instanceName}`,
+      updated,
+    );
+  }
+
+  setSettings(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SetSettingsDto,
+  ): Promise<SettingsDto> {
+    return this.http.request(
+      'post',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      `/settings/set/${instanceName}`,
+      dto,
+    );
+  }
+
+  findSettings(ctx: ProviderContext, instanceName: string): Promise<SettingsDto> {
+    return this.http.request(
+      'get',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      `/settings/find/${instanceName}`,
+    );
+  }
+
+  setProxy(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SetProxyDto,
+  ): Promise<ProxyDto> {
+    return this.http.request(
+      'post',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      `/proxy/set/${instanceName}`,
+      dto,
+    );
+  }
+
+  findProxy(ctx: ProviderContext, instanceName: string): Promise<ProxyDto> {
+    return this.http.request(
+      'get',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      `/proxy/find/${instanceName}`,
     );
   }
 }

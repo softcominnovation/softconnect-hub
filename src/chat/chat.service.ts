@@ -23,11 +23,11 @@ export class ChatService {
 
   private async resolve(
     product: AuthCachePayload,
-    instanceName: string,
-  ): Promise<{ ctx: ProviderContext; adapterType: string }> {
-    const resolved = await this.instanceResolver.resolve(
+    instanceId: string,
+  ): Promise<{ ctx: ProviderContext; adapterType: string; instanceName: string }> {
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     return {
       ctx: {
@@ -35,45 +35,46 @@ export class ChatService {
         providerApiKey: resolved.providerApiKey,
       },
       adapterType: resolved.adapterType,
+      instanceName: resolved.instanceName,
     };
   }
 
   async findChats(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: FindChatsDto,
   ): Promise<ChatDto[]> {
-    const { ctx, adapterType } = await this.resolve(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.resolve(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.findChats(ctx, instanceName, dto);
   }
 
   async findMessages(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: FindMessagesDto,
   ): Promise<MessageDto[]> {
-    const { ctx, adapterType } = await this.resolve(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.resolve(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.findMessages(ctx, instanceName, dto);
   }
 
   async findContacts(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: FindContactsDto,
   ): Promise<ContactDto[]> {
-    const { ctx, adapterType } = await this.resolve(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.resolve(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.findContacts(ctx, instanceName, dto);
   }
 
   async checkNumber(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: CheckNumberDto,
   ): Promise<CheckNumberResponseDto> {
-    const { ctx, adapterType } = await this.resolve(product, instanceName);
+    const { ctx, adapterType, instanceName } = await this.resolve(product, instanceId);
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.checkNumber(ctx, instanceName, dto);
   }

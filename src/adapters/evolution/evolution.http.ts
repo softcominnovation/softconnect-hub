@@ -1,4 +1,8 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  HttpException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import * as http from 'http';
@@ -86,6 +90,7 @@ export class EvolutionHttpService {
     apiKey: string,
     path: string,
     data?: unknown,
+    params?: Record<string, string>,
   ): Promise<T> {
     this.checkCircuit(vpsUrl);
 
@@ -98,16 +103,23 @@ export class EvolutionHttpService {
           method,
           url: `${vpsUrl}${path}`,
           headers: { apikey: apiKey },
+          params,
           data: method !== 'get' && method !== 'delete' ? data : undefined,
         });
         this.recordSuccess(vpsUrl);
         return response.data;
       } catch (err) {
+        if (axios.isAxiosError(err) && err.response) {
+          throw new HttpException(
+            err.response.data as Record<string, unknown>,
+            err.response.status,
+          );
+        }
         lastError = err as Error;
       }
     }
 
     this.recordFailure(vpsUrl);
-    throw lastError;
+    throw lastError ?? new Error('Unknown error');
   }
 }

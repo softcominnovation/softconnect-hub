@@ -5,6 +5,7 @@ import { AdapterResolverService } from '../providers/adapter-resolver.service';
 import type {
   ProviderContext,
   SetWebhookDto,
+  ToggleWebhookDto,
   WebhookDto,
 } from '../providers/whatsapp-provider.interface';
 import { InstanceResolverService } from '../resolver/instance.resolver';
@@ -26,12 +27,12 @@ export class WebhookService {
 
   async setWebhook(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
     dto: SetWebhookDto,
   ): Promise<void> {
-    const resolved = await this.instanceResolver.resolve(
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
@@ -40,28 +41,47 @@ export class WebhookService {
 
     const effectiveDto: SetWebhookDto = product.hubRelay
       ? {
-          ...dto,
-          url: `${this.baseUrl}/internal/webhook/${resolved.adapterType}`,
+          webhook: {
+            ...dto.webhook,
+            url: `${this.baseUrl}/internal/webhook/${resolved.adapterType}`,
+          },
         }
       : dto;
 
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.setWebhook(ctx, instanceName, effectiveDto);
+    return adapter.setWebhook(ctx, resolved.instanceName, effectiveDto);
   }
 
   async findWebhook(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
   ): Promise<WebhookDto> {
-    const resolved = await this.instanceResolver.resolve(
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.findWebhook(ctx, instanceName);
+    return adapter.findWebhook(ctx, resolved.instanceName);
+  }
+
+  async toggleWebhook(
+    product: AuthCachePayload,
+    instanceId: string,
+    dto: ToggleWebhookDto,
+  ): Promise<void> {
+    const resolved = await this.instanceResolver.resolveById(
+      product.productId,
+      instanceId,
+    );
+    const ctx: ProviderContext = {
+      providerUrl: resolved.providerUrl,
+      providerApiKey: resolved.providerApiKey,
+    };
+    const adapter = this.adapterResolver.resolve(resolved.adapterType);
+    return adapter.toggleWebhook(ctx, resolved.instanceName, dto);
   }
 }

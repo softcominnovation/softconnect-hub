@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
   ApiOperation,
   ApiParam,
   ApiResponse,
@@ -29,6 +30,7 @@ export class ProductsController {
 
   @Post()
   @ApiOperation({ summary: 'Cria um novo produto e gera uma API Key' })
+  @ApiBody({ type: CreateProductDto })
   @ApiResponse({
     status: 201,
     description: 'Produto criado com API Key gerada',
@@ -51,6 +53,7 @@ export class ProductsController {
     description: 'UUID do produto',
     example: 'uuid-do-produto',
   })
+  @ApiBody({ type: UpdateProductDto })
   @ApiResponse({ status: 200, description: 'Produto atualizado' })
   update(@Param('id') id: string, @Body() dto: UpdateProductDto) {
     return this.productsService.update(id, dto);

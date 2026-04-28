@@ -7,10 +7,10 @@ import {
   HttpStatus,
   Param,
   Post,
-  Put,
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBody,
   ApiOperation,
   ApiParam,
   ApiResponse,
@@ -21,7 +21,7 @@ import type { AuthCachePayload } from '../auth/apikey.guard';
 import { ApiKeyGuard } from '../auth/apikey.guard';
 import { RateLimitGuard } from '../auth/rate-limit.guard';
 import { Product } from '../common/decorators/product.decorator';
-import type { CreateInstanceDto } from '../providers/whatsapp-provider.interface';
+import { CreateInstanceDto } from './dto/create-instance.dto';
 import { InstanceService } from './instance.service';
 
 @ApiTags('Data Plane — Instances')
@@ -33,73 +33,91 @@ export class InstanceController {
 
   @Post('create')
   @ApiOperation({ summary: 'Criar instância no provider' })
-  @ApiResponse({ status: 201, description: 'Instância criada com sucesso' })
+  @ApiBody({ type: CreateInstanceDto })
+  @ApiResponse({ status: 201, description: 'Instância criada — retorna id (UUID Hub) na resposta' })
   create(@Product() product: AuthCachePayload, @Body() dto: CreateInstanceDto) {
     return this.service.createInstance(product, dto);
   }
 
-  @Get('fetchInstances')
+  @Get('list')
   @ApiOperation({ summary: 'Listar instâncias do produto' })
-  @ApiResponse({ status: 200, description: 'Lista de instâncias' })
-  fetchInstances(@Product() product: AuthCachePayload) {
-    return this.service.fetchInstances(product);
+  @ApiResponse({ status: 200, description: 'Lista de instâncias com id (UUID Hub) em cada item' })
+  list(@Product() product: AuthCachePayload) {
+    return this.service.listInstances(product);
   }
 
-  @Get('connect/:instance')
-  @ApiOperation({ summary: 'Conectar instância (obter QR code)' })
-  @ApiParam({ name: 'instance', description: 'Nome da instância' })
-  @ApiResponse({ status: 200, description: 'Dados de conexão' })
+  @Get(':instanceId')
+  @ApiOperation({ summary: 'Buscar dados de uma instância específica' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiResponse({ status: 200, description: 'Dados da instância' })
+  @ApiResponse({ status: 404, description: 'Instância não encontrada' })
+  fetchInstance(
+    @Product() product: AuthCachePayload,
+    @Param('instanceId') instanceId: string,
+  ) {
+    return this.service.fetchInstance(product, instanceId);
+  }
+
+  @Get(':instanceId/connect')
+  @ApiOperation({ summary: 'Conectar instância — retorna QR code ou state:open (polimórfico)' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiResponse({ status: 200, description: 'QR code (base64) ou estado open' })
+  @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   connect(
     @Product() product: AuthCachePayload,
-    @Param('instance') instance: string,
+    @Param('instanceId') instanceId: string,
   ) {
-    return this.service.connectInstance(product, instance);
+    return this.service.connectInstance(product, instanceId);
   }
 
-  @Get('connectionState/:instance')
+  @Get(':instanceId/status')
   @ApiOperation({ summary: 'Estado de conexão da instância' })
-  @ApiParam({ name: 'instance', description: 'Nome da instância' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiResponse({ status: 200, description: 'Estado atual da conexão' })
-  connectionState(
+  @ApiResponse({ status: 404, description: 'Instância não encontrada' })
+  status(
     @Product() product: AuthCachePayload,
-    @Param('instance') instance: string,
+    @Param('instanceId') instanceId: string,
   ) {
-    return this.service.getConnectionState(product, instance);
+    return this.service.getConnectionState(product, instanceId);
   }
 
-  @Put('restart/:instance')
+  @Post(':instanceId/restart')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Reiniciar instância' })
-  @ApiParam({ name: 'instance', description: 'Nome da instância' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiResponse({ status: 204, description: 'Instância reiniciada' })
+  @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   restart(
     @Product() product: AuthCachePayload,
-    @Param('instance') instance: string,
+    @Param('instanceId') instanceId: string,
   ) {
-    return this.service.restartInstance(product, instance);
+    return this.service.restartInstance(product, instanceId);
   }
 
-  @Delete('logout/:instance')
+  @Post(':instanceId/disconnect')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Deslogar instância do WhatsApp' })
-  @ApiParam({ name: 'instance', description: 'Nome da instância' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiResponse({ status: 204, description: 'Logout realizado' })
-  logout(
+  @ApiResponse({ status: 404, description: 'Instância não encontrada' })
+  disconnect(
     @Product() product: AuthCachePayload,
-    @Param('instance') instance: string,
+    @Param('instanceId') instanceId: string,
   ) {
-    return this.service.logoutInstance(product, instance);
+    return this.service.logoutInstance(product, instanceId);
   }
 
-  @Delete('delete/:instance')
+  @Delete(':instanceId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Deletar instância' })
-  @ApiParam({ name: 'instance', description: 'Nome da instância' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiResponse({ status: 204, description: 'Instância deletada' })
+  @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   delete(
     @Product() product: AuthCachePayload,
-    @Param('instance') instance: string,
+    @Param('instanceId') instanceId: string,
   ) {
-    return this.service.deleteInstance(product, instance);
+    return this.service.deleteInstance(product, instanceId);
   }
 }

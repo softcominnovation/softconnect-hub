@@ -69,21 +69,26 @@ export interface SendMediaDto {
   quoted?: QuotedMessageDto;
 }
 
-export interface SendAudioDto {
+export interface SendDocumentDto {
   number: string;
-  audio: string;
+  media: string;
+  fileName: string;
+  caption?: string;
   delay?: number;
   quoted?: QuotedMessageDto;
 }
 
-export interface SendButtonsDto {
+export interface SendStickerDto {
   number: string;
-  title: string;
-  description: string;
-  footer?: string;
-  buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>;
+  sticker: string;
   delay?: number;
   quoted?: QuotedMessageDto;
+}
+
+export interface SendPresenceDto {
+  number: string;
+  delay?: number;
+  presence: 'unavailable' | 'available' | 'composing' | 'recording' | 'paused';
 }
 
 export interface SendListDto {
@@ -98,35 +103,6 @@ export interface SendListDto {
   }>;
   delay?: number;
   quoted?: QuotedMessageDto;
-}
-
-export interface SendLocationDto {
-  number: string;
-  name: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  delay?: number;
-  quoted?: QuotedMessageDto;
-}
-
-export interface SendContactDto {
-  number: string;
-  contact: Array<{
-    fullName: string;
-    wuid?: string;
-    phoneNumber: string;
-    organization?: string;
-    email?: string;
-    url?: string;
-  }>;
-  delay?: number;
-  quoted?: QuotedMessageDto;
-}
-
-export interface SendReactionDto {
-  key: { id: string; remoteJid: string; fromMe: boolean };
-  reaction: string;
 }
 
 export interface QuotedMessageDto {
@@ -188,19 +164,66 @@ export interface CheckNumberResponseDto {
 
 // --- Webhook DTOs ---
 
-export interface SetWebhookDto {
+export interface WebhookPayloadDto {
+  enabled: boolean;
   url: string;
-  webhook_by_events?: boolean;
-  webhook_base64?: boolean;
+  headers?: Record<string, string>;
+  byEvents?: boolean;
+  base64?: boolean;
   events?: string[];
 }
 
+export interface SetWebhookDto {
+  webhook: WebhookPayloadDto;
+}
+
 export interface WebhookDto {
+  webhook: WebhookPayloadDto;
+}
+
+export interface ToggleWebhookDto {
   enabled: boolean;
-  url: string;
-  events?: string[];
-  webhook_by_events?: boolean;
-  webhook_base64?: boolean;
+}
+
+// --- Settings DTOs ---
+
+export interface SetSettingsDto {
+  rejectCall?: boolean;
+  msgCall?: string;
+  groupsIgnore?: boolean;
+  alwaysOnline?: boolean;
+  readMessages?: boolean;
+  syncFullHistory?: boolean;
+  readStatus?: boolean;
+}
+
+export interface SettingsDto {
+  rejectCall: boolean;
+  msgCall?: string;
+  groupsIgnore: boolean;
+  alwaysOnline: boolean;
+  readMessages: boolean;
+  syncFullHistory: boolean;
+  readStatus: boolean;
+}
+
+// --- Proxy DTOs ---
+
+export interface SetProxyDto {
+  enabled: boolean;
+  host: string;
+  port: string;
+  protocol: 'http' | 'https' | 'socks5';
+  username?: string;
+  password?: string;
+}
+
+export interface ProxyDto {
+  enabled: boolean;
+  host: string;
+  port: string;
+  protocol: string;
+  username?: string;
 }
 
 // --- Main interface ---
@@ -208,6 +231,7 @@ export interface WebhookDto {
 export interface WhatsAppProvider {
   createInstance(ctx: ProviderContext, dto: CreateInstanceDto): Promise<InstanceCreatedDto>;
   fetchInstances(ctx: ProviderContext): Promise<InstanceDto[]>;
+  fetchInstance(ctx: ProviderContext, instanceName: string): Promise<InstanceDto>;
   connectInstance(ctx: ProviderContext, instanceName: string): Promise<ConnectInstanceDto>;
   getConnectionState(ctx: ProviderContext, instanceName: string): Promise<ConnectionStateDto>;
   restartInstance(ctx: ProviderContext, instanceName: string): Promise<void>;
@@ -216,12 +240,10 @@ export interface WhatsAppProvider {
 
   sendText(ctx: ProviderContext, instanceName: string, dto: SendTextDto): Promise<MessageResponseDto>;
   sendMedia(ctx: ProviderContext, instanceName: string, dto: SendMediaDto): Promise<MessageResponseDto>;
-  sendWhatsAppAudio(ctx: ProviderContext, instanceName: string, dto: SendAudioDto): Promise<MessageResponseDto>;
-  sendButtons(ctx: ProviderContext, instanceName: string, dto: SendButtonsDto): Promise<MessageResponseDto>;
+  sendDocument(ctx: ProviderContext, instanceName: string, dto: SendDocumentDto): Promise<MessageResponseDto>;
+  sendSticker(ctx: ProviderContext, instanceName: string, dto: SendStickerDto): Promise<MessageResponseDto>;
   sendList(ctx: ProviderContext, instanceName: string, dto: SendListDto): Promise<MessageResponseDto>;
-  sendLocation(ctx: ProviderContext, instanceName: string, dto: SendLocationDto): Promise<MessageResponseDto>;
-  sendContact(ctx: ProviderContext, instanceName: string, dto: SendContactDto): Promise<MessageResponseDto>;
-  sendReaction(ctx: ProviderContext, instanceName: string, dto: SendReactionDto): Promise<MessageResponseDto>;
+  sendPresence(ctx: ProviderContext, instanceName: string, dto: SendPresenceDto): Promise<void>;
 
   findChats(ctx: ProviderContext, instanceName: string, dto: FindChatsDto): Promise<ChatDto[]>;
   findMessages(ctx: ProviderContext, instanceName: string, dto: FindMessagesDto): Promise<MessageDto[]>;
@@ -230,4 +252,11 @@ export interface WhatsAppProvider {
 
   setWebhook(ctx: ProviderContext, instanceName: string, dto: SetWebhookDto): Promise<void>;
   findWebhook(ctx: ProviderContext, instanceName: string): Promise<WebhookDto>;
+  toggleWebhook(ctx: ProviderContext, instanceName: string, dto: ToggleWebhookDto): Promise<void>;
+
+  setSettings(ctx: ProviderContext, instanceName: string, dto: SetSettingsDto): Promise<SettingsDto>;
+  findSettings(ctx: ProviderContext, instanceName: string): Promise<SettingsDto>;
+
+  setProxy(ctx: ProviderContext, instanceName: string, dto: SetProxyDto): Promise<ProxyDto>;
+  findProxy(ctx: ProviderContext, instanceName: string): Promise<ProxyDto>;
 }

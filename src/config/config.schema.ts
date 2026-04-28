@@ -27,6 +27,11 @@ export const configSchema = z.object({
     .optional()
     .transform((v) => v !== 'false')
     .default(true),
+  CACHE_DEBUG: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true')
+    .default(false),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

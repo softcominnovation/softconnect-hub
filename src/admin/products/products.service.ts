@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Product } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { CacheService } from '../../cache/cache.service';
 import { generateApiKey, hashSHA256 } from '../../common/crypto.util';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -21,19 +22,26 @@ export class ProductsService {
     const apiKey = generateApiKey();
     const apiKeyHash = hashSHA256(apiKey);
 
-    const product = await this.prisma.product.create({
-      data: {
-        name: dto.name,
-        slug: dto.slug,
-        apiKeyHash,
-        adapterType: dto.adapterType ?? 'evolution',
-        origins: dto.origins ?? [],
-        hubRelay: dto.hubRelay ?? false,
-        vpsId: dto.vpsId ?? null,
-      },
-    });
+    try {
+      const product = await this.prisma.product.create({
+        data: {
+          name: dto.name,
+          slug: dto.slug,
+          apiKeyHash,
+          adapterType: dto.adapterType ?? 'evolution',
+          origins: dto.origins ?? [],
+          hubRelay: dto.hubRelay ?? false,
+          vpsId: dto.vpsId ?? null,
+        },
+      });
 
-    return { ...this.stripHash(product), apiKey };
+      return { ...this.stripHash(product), apiKey };
+    } catch (err) {
+      if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException('A product with this slug already exists');
+      }
+      throw err;
+    }
   }
 
   async findAll(): Promise<SafeProduct[]> {

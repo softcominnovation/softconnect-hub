@@ -33,7 +33,24 @@ describe('EvolutionAdapter', () => {
         CTX.providerUrl,
         CTX.providerApiKey,
         '/instance/create',
-        dto,
+        { ...dto, integration: 'WHATSAPP-BAILEYS' },
+      );
+      expect(result).toBe(expected);
+    });
+
+    it('createInstance — preserves integration when explicitly provided', async () => {
+      const dto = { instanceName: INSTANCE, integration: 'WHATSAPP-BUSINESS' };
+      const expected = { instanceName: INSTANCE, status: 'open' };
+      http.request.mockResolvedValue(expected);
+
+      const result = await adapter.createInstance(CTX, dto);
+
+      expect(http.request).toHaveBeenCalledWith(
+        'post',
+        CTX.providerUrl,
+        CTX.providerApiKey,
+        '/instance/create',
+        { ...dto, integration: 'WHATSAPP-BUSINESS' },
       );
       expect(result).toBe(expected);
     });
@@ -161,38 +178,51 @@ describe('EvolutionAdapter', () => {
       );
     });
 
-    it('sendWhatsAppAudio — delegates to POST /message/sendWhatsAppAudio/:instance', async () => {
+    it('sendDocument — injects mediatype:document and delegates to POST /message/sendMedia/:instance', async () => {
       const dto = {
         number: '5511999998888',
-        audio: 'data:audio/ogg;base64,abc123',
+        media: 'https://example.com/doc.pdf',
+        fileName: 'doc.pdf',
       };
       http.request.mockResolvedValue(msgResponse);
 
-      await adapter.sendWhatsAppAudio(CTX, INSTANCE, dto);
+      await adapter.sendDocument(CTX, INSTANCE, dto);
 
       expect(http.request).toHaveBeenCalledWith(
         'post',
         CTX.providerUrl,
         CTX.providerApiKey,
-        `/message/sendWhatsAppAudio/${INSTANCE}`,
+        `/message/sendMedia/${INSTANCE}`,
+        { ...dto, mediatype: 'document' },
+      );
+    });
+
+    it('sendSticker — delegates to POST /message/sendSticker/:instance', async () => {
+      const dto = { number: '5511999998888', sticker: 'https://example.com/sticker.webp' };
+      http.request.mockResolvedValue(msgResponse);
+
+      await adapter.sendSticker(CTX, INSTANCE, dto);
+
+      expect(http.request).toHaveBeenCalledWith(
+        'post',
+        CTX.providerUrl,
+        CTX.providerApiKey,
+        `/message/sendSticker/${INSTANCE}`,
         dto,
       );
     });
 
-    it('sendReaction — delegates to POST /message/sendReaction/:instance', async () => {
-      const dto = {
-        key: { id: 'msg-1', remoteJid: '5511@s.whatsapp.net', fromMe: true },
-        reaction: '❤️',
-      };
-      http.request.mockResolvedValue(msgResponse);
+    it('sendPresence — delegates to POST /message/sendPresence/:instance', async () => {
+      const dto = { number: '5511999998888', presence: 'composing' as const };
+      http.request.mockResolvedValue(undefined);
 
-      await adapter.sendReaction(CTX, INSTANCE, dto);
+      await adapter.sendPresence(CTX, INSTANCE, dto);
 
       expect(http.request).toHaveBeenCalledWith(
         'post',
         CTX.providerUrl,
         CTX.providerApiKey,
-        `/message/sendReaction/${INSTANCE}`,
+        `/message/sendPresence/${INSTANCE}`,
         dto,
       );
     });
@@ -229,7 +259,7 @@ describe('EvolutionAdapter', () => {
 
   describe('Webhook methods', () => {
     it('setWebhook — delegates to POST /webhook/set/:instance', async () => {
-      const dto = { url: 'https://n8n.softcom.test/webhook/wh' };
+      const dto = { webhook: { enabled: true, url: 'https://n8n.softcom.test/webhook/wh' } };
       http.request.mockResolvedValue(undefined);
 
       await adapter.setWebhook(CTX, INSTANCE, dto);
@@ -245,8 +275,7 @@ describe('EvolutionAdapter', () => {
 
     it('findWebhook — delegates to GET /webhook/find/:instance', async () => {
       const expected = {
-        enabled: true,
-        url: 'https://n8n.softcom.test/webhook/wh',
+        webhook: { enabled: true, url: 'https://n8n.softcom.test/webhook/wh' },
       };
       http.request.mockResolvedValue(expected);
 

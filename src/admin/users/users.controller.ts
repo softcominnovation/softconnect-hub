@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
   ApiHeader,
   ApiOperation,
   ApiParam,
@@ -42,6 +43,7 @@ export class AdminUsersController {
     description: 'Secret de bootstrap (variável ADMIN_SECRET)',
     required: true,
   })
+  @ApiBody({ type: CreateUserDto })
   @ApiResponse({ status: 201, description: 'Usuário bootstrap criado' })
   @ApiResponse({
     status: 403,
@@ -60,6 +62,7 @@ export class AdminUsersController {
   @UseGuards(JwtGuard)
   @Post()
   @ApiOperation({ summary: 'Cria um novo usuário admin' })
+  @ApiBody({ type: CreateUserDto })
   @ApiResponse({ status: 201, description: 'Usuário criado' })
   create(@Body() dto: CreateUserDto, @Req() req: AdminRequest) {
     const actorId = req.admin?.sub !== 'admin' ? req.admin?.sub : undefined;
@@ -84,6 +87,7 @@ export class AdminUsersController {
     description: 'UUID do usuário',
     example: 'uuid-do-usuario',
   })
+  @ApiBody({ type: UpdateUserDto })
   @ApiResponse({ status: 200, description: 'Usuário atualizado' })
   update(
     @Param('id') id: string,

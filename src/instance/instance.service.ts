@@ -19,6 +19,7 @@ import {
 } from '../providers/whatsapp-provider.interface';
 import { InstanceResolverService } from '../resolver/instance.resolver';
 
+
 @Injectable()
 export class InstanceService {
   private readonly encryptionKeyHex: string;
@@ -36,7 +37,7 @@ export class InstanceService {
   async createInstance(
     product: AuthCachePayload,
     dto: CreateInstanceDto,
-  ): Promise<InstanceCreatedDto> {
+  ): Promise<InstanceCreatedDto & { id: string }> {
     if (!product.vpsId) {
       throw new BadRequestException('Produto sem VPS associada');
     }
@@ -64,7 +65,7 @@ export class InstanceService {
     const adapter = this.adapterResolver.resolve(product.adapterType);
     const result = await adapter.createInstance(ctx, dto);
 
-    await this.prisma.instance.create({
+    const instance = await this.prisma.instance.create({
       data: {
         productId: product.productId,
         vpsId: vps.id,
@@ -75,12 +76,12 @@ export class InstanceService {
       },
     });
 
-    await this.cache.del(`instance:${product.productId}:${dto.instanceName}`);
-
-    return result;
+    return { ...result, id: instance.id };
   }
 
-  async fetchInstances(product: AuthCachePayload): Promise<InstanceDto[]> {
+  async listInstances(
+    product: AuthCachePayload,
+  ): Promise<(InstanceDto & { id: string })[]> {
     if (!product.vpsId) {
       throw new BadRequestException('Produto sem VPS associada');
     }
@@ -100,94 +101,122 @@ export class InstanceService {
     };
 
     const adapter = this.adapterResolver.resolve(product.adapterType);
-    return adapter.fetchInstances(ctx);
+    const providerInstances = await adapter.fetchInstances(ctx);
+
+    const dbInstances = await this.prisma.instance.findMany({
+      where: { productId: product.productId, isActive: true },
+      select: { id: true, instanceName: true },
+    });
+
+    const nameToId = new Map(dbInstances.map((i) => [i.instanceName, i.id]));
+
+    return providerInstances.map((inst) => ({
+      ...inst,
+      id: nameToId.get(inst.instanceName) ?? '',
+    }));
+  }
+
+  async fetchInstance(
+    product: AuthCachePayload,
+    instanceId: string,
+  ): Promise<InstanceDto> {
+    const resolved = await this.instanceResolver.resolveById(
+      product.productId,
+      instanceId,
+    );
+    const ctx: ProviderContext = {
+      providerUrl: resolved.providerUrl,
+      providerApiKey: resolved.providerApiKey,
+    };
+    const adapter = this.adapterResolver.resolve(resolved.adapterType);
+    return adapter.fetchInstance(ctx, resolved.instanceName);
   }
 
   async connectInstance(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
   ): Promise<ConnectInstanceDto> {
-    const resolved = await this.instanceResolver.resolve(
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.connectInstance(ctx, instanceName);
+    return adapter.connectInstance(ctx, resolved.instanceName);
   }
 
   async getConnectionState(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
   ): Promise<ConnectionStateDto> {
-    const resolved = await this.instanceResolver.resolve(
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.getConnectionState(ctx, instanceName);
+    return adapter.getConnectionState(ctx, resolved.instanceName);
   }
 
   async restartInstance(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
   ): Promise<void> {
-    const resolved = await this.instanceResolver.resolve(
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.restartInstance(ctx, instanceName);
+    return adapter.restartInstance(ctx, resolved.instanceName);
   }
 
   async logoutInstance(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
   ): Promise<void> {
-    const resolved = await this.instanceResolver.resolve(
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    await adapter.logoutInstance(ctx, instanceName);
-    await this.cache.del(`instance:${product.productId}:${instanceName}`);
+    await adapter.logoutInstance(ctx, resolved.instanceName);
+    await this.cache.del(`instance:${instanceId}`);
   }
 
   async deleteInstance(
     product: AuthCachePayload,
-    instanceName: string,
+    instanceId: string,
   ): Promise<void> {
-    const resolved = await this.instanceResolver.resolve(
+    const resolved = await this.instanceResolver.resolveById(
       product.productId,
-      instanceName,
+      instanceId,
     );
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    await adapter.deleteInstance(ctx, instanceName);
+    await adapter.deleteInstance(ctx, resolved.instanceName);
 
     await this.prisma.instance.updateMany({
-      where: { productId: product.productId, instanceName },
+      where: { id: instanceId, productId: product.productId },
       data: { isActive: false },
     });
 
-    await this.cache.del(`instance:${product.productId}:${instanceName}`);
+    await this.cache.del(`instance:${instanceId}`);
   }
 }

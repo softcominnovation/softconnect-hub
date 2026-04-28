@@ -84,7 +84,7 @@ src/
 │   └── cache.module.ts
 │
 ├── resolver/
-│   ├── instance.resolver.ts             # productId + instanceName → {providerUrl, apiKey, adapterType}
+│   ├── instance.resolver.ts             # resolveById(productId, instanceId) → ResolvedInstance (hot path); resolve(productId, instanceName) para createInstance
 │   └── resolver.module.ts
 │
 ├── admin/
@@ -117,7 +117,7 @@ src/
 │   └── chat.module.ts
 │
 ├── webhook/
-│   ├── webhook.controller.ts           # set e find — repassa para provider via adapter
+│   ├── webhook.controller.ts           # set, find, toggle — repassa para provider via adapter
 │   ├── internal-webhook.controller.ts  # recebe eventos do provider (IP whitelist)
 │   ├── relay/
 │   │   ├── relay.producer.ts           # publica job de repasse no BullMQ (hub_relay)
@@ -125,6 +125,18 @@ src/
 │   │   └── relay.module.ts
 │   ├── webhook.service.ts
 │   └── webhook.module.ts
+│
+├── settings/
+│   ├── settings.controller.ts          # POST set/:instance, GET find/:instance
+│   ├── settings.service.ts
+│   ├── dto/settings.dto.ts
+│   └── settings.module.ts
+│
+├── proxy/
+│   ├── proxy.controller.ts             # POST set/:instance, GET find/:instance
+│   ├── proxy.service.ts
+│   ├── dto/proxy.dto.ts
+│   └── proxy.module.ts
 │
 ├── health/
 │   ├── health.service.ts               # CRON 60s + atualiza Redis e Postgres
@@ -214,6 +226,7 @@ model Instance {
   batchJobs BatchJob[]
 
   @@unique([vpsId, instanceName])
+  @@unique([productId, instanceName])    // unicidade de nome por produto — suporta cenário futuro de multi-VPS por produto
 }
 
 model WebhookConfig {
@@ -358,21 +371,20 @@ export interface WhatsAppProvider {
   // Instâncias
   createInstance(ctx: ProviderContext, dto: CreateInstanceDto): Promise<InstanceCreatedDto>
   fetchInstances(ctx: ProviderContext): Promise<InstanceDto[]>
+  fetchInstance(ctx: ProviderContext, instanceName: string): Promise<InstanceDto>
   connectInstance(ctx: ProviderContext, instanceName: string): Promise<ConnectInstanceDto>
   getConnectionState(ctx: ProviderContext, instanceName: string): Promise<ConnectionStateDto>
   restartInstance(ctx: ProviderContext, instanceName: string): Promise<void>
   logoutInstance(ctx: ProviderContext, instanceName: string): Promise<void>
   deleteInstance(ctx: ProviderContext, instanceName: string): Promise<void>
 
-  // Mensagens
+  // Mensagens unitárias
   sendText(ctx: ProviderContext, instanceName: string, dto: SendTextDto): Promise<MessageResponseDto>
   sendMedia(ctx: ProviderContext, instanceName: string, dto: SendMediaDto): Promise<MessageResponseDto>
-  sendWhatsAppAudio(ctx: ProviderContext, instanceName: string, dto: SendAudioDto): Promise<MessageResponseDto>
-  sendButtons(ctx: ProviderContext, instanceName: string, dto: SendButtonsDto): Promise<MessageResponseDto>
+  sendDocument(ctx: ProviderContext, instanceName: string, dto: SendDocumentDto): Promise<MessageResponseDto>
+  sendSticker(ctx: ProviderContext, instanceName: string, dto: SendStickerDto): Promise<MessageResponseDto>
   sendList(ctx: ProviderContext, instanceName: string, dto: SendListDto): Promise<MessageResponseDto>
-  sendLocation(ctx: ProviderContext, instanceName: string, dto: SendLocationDto): Promise<MessageResponseDto>
-  sendContact(ctx: ProviderContext, instanceName: string, dto: SendContactDto): Promise<MessageResponseDto>
-  sendReaction(ctx: ProviderContext, instanceName: string, dto: SendReactionDto): Promise<MessageResponseDto>
+  sendPresence(ctx: ProviderContext, instanceName: string, dto: SendPresenceDto): Promise<void>
 
   // Chat
   findChats(ctx: ProviderContext, instanceName: string, dto: FindChatsDto): Promise<ChatDto[]>
@@ -383,6 +395,15 @@ export interface WhatsAppProvider {
   // Webhook
   setWebhook(ctx: ProviderContext, instanceName: string, dto: SetWebhookDto): Promise<void>
   findWebhook(ctx: ProviderContext, instanceName: string): Promise<WebhookDto>
+  toggleWebhook(ctx: ProviderContext, instanceName: string, dto: ToggleWebhookDto): Promise<void>
+
+  // Settings
+  setSettings(ctx: ProviderContext, instanceName: string, dto: SetSettingsDto): Promise<SettingsDto>
+  findSettings(ctx: ProviderContext, instanceName: string): Promise<SettingsDto>
+
+  // Proxy
+  setProxy(ctx: ProviderContext, instanceName: string, dto: SetProxyDto): Promise<ProxyDto>
+  findProxy(ctx: ProviderContext, instanceName: string): Promise<ProxyDto>
 }
 
 // Contexto stateless — URL e credenciais da VPS destino, fornecidos por chamada
@@ -390,9 +411,14 @@ interface ProviderContext {
   providerUrl: string;
   providerApiKey: string;
 }
+
+// DTOs removidos (não suportados pela Evolution API 2.3.7 ou descontinuados):
+// SendAudioDto, SendButtonsDto, SendLocationDto, SendContactDto, SendReactionDto
 ```
 
 > **Regra:** adapter é stateless. A mesma instância de `EvolutionAdapter` serve múltiplas VPS — a VPS é fornecida via `ProviderContext` a cada chamada. Nunca armazenar URL/key no adapter.
+>
+> **Importante:** os adapters **sempre recebem `instanceName` (string)** — nunca o UUID do Hub. A tradução UUID → nome é responsabilidade exclusiva do `InstanceResolverService` antes de chegar ao adapter.
 
 ---
 
@@ -400,40 +426,69 @@ interface ProviderContext {
 
 ### Data Plane — `apikey: {product-api-key}` no header
 
+> **Prefixo global:** todas as rotas abaixo são servidas sob `/api/v1/` (ex.: `GET /api/v1/instance/list`).
+>
+> **Parâmetro de instância:** todos os endpoints do data plane que identificam uma instância usam `:instanceId` — o UUID da tabela `Instance` do Hub. O cliente obtém esse UUID via `POST /instance/create` ou `GET /instance/list`.
+
 ```
 # Instâncias
 POST   /instance/create
-GET    /instance/fetchInstances
-GET    /instance/connect/{instance}
-GET    /instance/connectionState/{instance}
-PUT    /instance/restart/{instance}
-DELETE /instance/logout/{instance}
-DELETE /instance/delete/{instance}
+GET    /instance/list
+GET    /instance/:instanceId
+GET    /instance/:instanceId/connect          ← QR code ou state:open (polimórfico)
+GET    /instance/:instanceId/status           ← estado de conexão
+POST   /instance/:instanceId/restart
+POST   /instance/:instanceId/disconnect       ← logout do WhatsApp
+DELETE /instance/:instanceId
 
-# Mensagens
-POST   /message/sendText/{instance}
-POST   /message/sendMedia/{instance}
-POST   /message/sendWhatsAppAudio/{instance}
-POST   /message/sendButtons/{instance}
-POST   /message/sendList/{instance}
-POST   /message/sendLocation/{instance}
-POST   /message/sendContact/{instance}
-POST   /message/sendReaction/{instance}
-POST   /message/sendText/{instance}/batch    ← extensão Hub — BullMQ + BatchJob
-GET    /message/batch/{batchJobId}/status    ← lê BatchJob do Postgres (histórico eterno)
+# Mensagens unitárias
+POST   /message/sendText/:instanceId
+POST   /message/sendMedia/:instanceId
+POST   /message/sendDocument/:instanceId
+POST   /message/sendSticker/:instanceId
+POST   /message/sendList/:instanceId
+POST   /message/sendPresence/:instanceId
+
+# Mensagens em lote (assíncrono — BullMQ + BatchJob)
+POST   /message/batch/send-text/:instanceId
+POST   /message/batch/send-media/:instanceId
+POST   /message/batch/send-document/:instanceId
+GET    /message/batch/:jobId/status           ← jobId = UUID do BatchJob (não é instanceId)
+DELETE /message/batch/:jobId
 
 # Chat
-POST   /chat/whatsappNumbers/{instance}
-POST   /chat/findChats/{instance}
-POST   /chat/findMessages/{instance}
-POST   /chat/findContacts/{instance}
+POST   /chat/checkNumber/:instanceId
+POST   /chat/findChats/:instanceId
+POST   /chat/findMessages/:instanceId
+POST   /chat/findContacts/:instanceId
 
 # Webhook
-POST   /webhook/set/{instance}
-GET    /webhook/find/{instance}
+POST   /webhook/set/:instanceId               ← body: { webhook: { enabled, url, headers?, byEvents?, base64?, events? } }
+GET    /webhook/find/:instanceId
+POST   /webhook/toggle/:instanceId            ← body: { enabled: boolean }
+
+# Settings
+POST   /settings/set/:instanceId
+GET    /settings/find/:instanceId
+
+# Proxy
+POST   /proxy/set/:instanceId
+GET    /proxy/find/:instanceId
 
 # Interno (IP whitelist das VPS — sem apikey, sem JWT)
 POST   /internal/webhook/{adapterType}
+```
+
+### Endpoints removidos (descontinuados na sessão 24/04/2026)
+
+Os seguintes endpoints foram removidos por não serem suportados de forma estável pela Evolution API 2.3.7:
+
+```
+POST   /message/sendWhatsAppAudio/{instance}   ← removido
+POST   /message/sendButtons/{instance}         ← removido
+POST   /message/sendLocation/{instance}        ← removido
+POST   /message/sendContact/{instance}         ← removido
+POST   /message/sendReaction/{instance}        ← removido
 ```
 
 ### Admin Plane — `Authorization: Bearer {jwt}` no header
@@ -469,9 +524,9 @@ POST   /admin/auth/login  → retorna JWT (24h)
 ```
 Request
   → ApiKeyGuard           # Redis auth:{apiKeyHash} — HIT: <1ms, MISS: Postgres + cache
-  → InstanceResolver      # Redis instance:{productId}:{instanceName} — retorna providerUrl + adapterType
+  → InstanceResolver      # Redis instance:{instanceId} — retorna providerUrl + adapterType + instanceName
   → AdapterResolver       # registry.get(adapterType) — O(1) em memória
-  → ProxyService          # adapter.sendText(ctx, ...) via Axios keep-alive
+  → ProxyService          # adapter.sendText(ctx, instanceName, ...) via Axios keep-alive
   → Response ao cliente
 
 (sem await — fora do response path)
@@ -547,10 +602,11 @@ auth:{apiKeyHash}
   → TTL: 60s
   → Invalidar: ao desativar produto, rotacionar apikey ou alterar adapterType
 
-instance:{productId}:{instanceName}
-  → { providerUrl, providerApiKey, vpsId, instanceId, adapterType }
+instance:{instanceId}
+  → { providerUrl, providerApiKey, vpsId, instanceId, instanceName, adapterType }
   → TTL: 300s (5min)
-  → Invalidar: ao criar, deletar ou mover instância
+  → Chave baseada no UUID da instância — imutável, independente do nome
+  → Invalidar: ao criar, deletar ou mover instância (del instance:{id})
 
 vps:health:{vpsId}
   → { isHealthy, lastCheckedAt }
@@ -647,6 +703,9 @@ AUDIT_FLUSH_BATCH_SIZE=100    # ou a cada 100 registros (o que ocorrer primeiro)
 
 # Adapter
 DEFAULT_ADAPTER_TYPE=evolution  # fallback se produto não tiver adapterType definido
+
+# Debug
+CACHE_DEBUG=false  # quando true, loga HIT/MISS do cache de instância no hot path com elapsed time
 ```
 
 > A aplicação **não deve subir** se qualquer variável obrigatória estiver ausente. O `ConfigModule` com `zod` valida no bootstrap e loga exatamente qual variável está faltando.
@@ -724,7 +783,7 @@ maintenance_work_mem = 512MB
 
 **Redis** (`redis.conf`):
 ```
-maxmemory 512mb
+maxmemory 256mb
 maxmemory-policy allkeys-lru
 appendonly yes                  # persistência dos jobs BullMQ em restarts
 ```
@@ -820,6 +879,12 @@ Em caso de problema em produção:
 | TOTP apenas no Admin Plane | 2FA no Data Plane | 500 req/s com TOTP = gargalo imediato. Data Plane protegido por apikey via Redis. |
 | Nomes de endpoint idênticos à Evolution API | Nomenclatura própria | Trocar de provider deve ser transparente para o cliente — apenas muda a base URL. |
 | VPS 4 vCPU / 16GB RAM | 2 vCPU / 8GB (apertado) ou 8 vCPU / 32GB (prematuro) | Folga real para crescimento. Escala horizontal com Swarm quando necessário. |
+| **Data plane usa `:instanceId` (UUID) como parâmetro de rota** | `:instanceName` (string do provider) | UUID é globalmente único, desacopla API pública do naming do provider, REST-correto. Tradução para `instanceName` é feita internamente pelo resolver — adapters não percebem a mudança. |
+| **`@@unique([productId, instanceName])` no model Instance** | Apenas `@@unique([vpsId, instanceName])` | Fecha gap de unicidade: impede nomes iguais no mesmo produto em VPSes diferentes. Forward-compatible com cenário futuro de multi-VPS por produto. As duas constraints coexistem e garantem dimensões distintas de unicidade. |
+| **Cache key `instance:{uuid}`** | `instance:{productId}:{instanceName}` composta | Chave simples, imutável, derivada diretamente do parâmetro de rota. Zero composição necessária no hot path. |
+| **`resolveById(productId, instanceId)` com `productId` no where** | Busca apenas por `instanceId` | Isola instâncias entre produtos — cliente autenticado não pode acessar UUID de instância de outro produto. O `productId` vem do token, nunca do request body. |
+| **`/instance/:id/connect` em vez de `/qrcode`** | Endpoint `/qrcode` separado | A Evolution retorna QR code ou `state:open` no mesmo endpoint dependendo do estado — resposta polimórfica. Nome `/connect` é correto semanticamente para adapters futuros que não usam QR. |
+| **Batch worker recebe `instanceName` no payload do job** | Worker resolve `instanceName` do banco/Redis por job | Zero roundtrip adicional por mensagem no worker. O producer resolve uma única vez no enfileiramento e persiste `instanceName` no payload BullMQ. |
 
 ---
 

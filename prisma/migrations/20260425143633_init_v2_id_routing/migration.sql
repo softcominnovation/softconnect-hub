@@ -84,6 +84,32 @@ CREATE TABLE "AuditLog" (
 );
 
 -- CreateTable
+CREATE TABLE "AdminUser" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "passwordHash" TEXT NOT NULL,
+    "type" TEXT NOT NULL DEFAULT 'admin',
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "AdminUser_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AdminActivityLog" (
+    "id" TEXT NOT NULL,
+    "adminUserId" TEXT NOT NULL,
+    "action" TEXT NOT NULL,
+    "detail" TEXT,
+    "ip" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AdminActivityLog_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "HealthCheck" (
     "id" TEXT NOT NULL,
     "vpsId" TEXT NOT NULL,
@@ -125,6 +151,12 @@ CREATE UNIQUE INDEX "Instance_hubToken_key" ON "Instance"("hubToken");
 -- CreateIndex
 CREATE UNIQUE INDEX "Instance_vpsId_instanceName_key" ON "Instance"("vpsId", "instanceName");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "Instance_productId_instanceName_key" ON "Instance"("productId", "instanceName");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AdminUser_email_key" ON "AdminUser"("email");
+
 -- AddForeignKey
 ALTER TABLE "Product" ADD CONSTRAINT "Product_vpsId_fkey" FOREIGN KEY ("vpsId") REFERENCES "VpsServer"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
@@ -142,6 +174,9 @@ ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_productId_fkey" FOREIGN KEY ("pr
 
 -- AddForeignKey
 ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_instanceId_fkey" FOREIGN KEY ("instanceId") REFERENCES "Instance"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AdminActivityLog" ADD CONSTRAINT "AdminActivityLog_adminUserId_fkey" FOREIGN KEY ("adminUserId") REFERENCES "AdminUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "HealthCheck" ADD CONSTRAINT "HealthCheck_vpsId_fkey" FOREIGN KEY ("vpsId") REFERENCES "VpsServer"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

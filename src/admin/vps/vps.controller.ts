@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
   ApiOperation,
   ApiParam,
   ApiResponse,
@@ -29,6 +30,7 @@ export class VpsController {
 
   @Post()
   @ApiOperation({ summary: 'Cadastra uma nova VPS' })
+  @ApiBody({ type: CreateVpsDto })
   @ApiResponse({ status: 201, description: 'VPS cadastrada' })
   create(@Body() dto: CreateVpsDto) {
     return this.vpsService.create(dto);
@@ -44,6 +46,7 @@ export class VpsController {
   @Put(':id')
   @ApiOperation({ summary: 'Atualiza uma VPS' })
   @ApiParam({ name: 'id', description: 'UUID da VPS', example: 'uuid-da-vps' })
+  @ApiBody({ type: UpdateVpsDto })
   @ApiResponse({ status: 200, description: 'VPS atualizada' })
   update(@Param('id') id: string, @Body() dto: UpdateVpsDto) {
     return this.vpsService.update(id, dto);

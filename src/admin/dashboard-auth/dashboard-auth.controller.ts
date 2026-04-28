@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import {
+  ApiBody,
   ApiOperation,
   ApiResponse,
   ApiTags,
@@ -21,6 +22,7 @@ export class DashboardAuthController {
 
   @Post('login')
   @ApiOperation({ summary: 'Login com email/senha — retorna JWT dashboard' })
+  @ApiBody({ type: DashboardLoginDto })
   @ApiResponse({ status: 201, description: 'JWT gerado' })
   @ApiResponse({ status: 401, description: 'Credenciais inválidas' })
   login(@Body() dto: DashboardLoginDto, @Req() req: FastifyRequest) {

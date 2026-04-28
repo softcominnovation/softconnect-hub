@@ -21,7 +21,10 @@ import { InstanceModule } from './instance/instance.module';
 import { MessageModule } from './message/message.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProviderModule } from './providers/provider.module';
+import { ProxyModule } from './proxy/proxy.module';
+import { QueueModule } from './queue/queue.module';
 import { ResolverModule } from './resolver/resolver.module';
+import { SettingsModule } from './settings/settings.module';
 import { WebhookModule } from './webhook/webhook.module';
 
 @Module({
@@ -44,6 +47,9 @@ import { WebhookModule } from './webhook/webhook.module';
     MessageModule,
     ChatModule,
     WebhookModule,
+    SettingsModule,
+    ProxyModule,
+    QueueModule,
   ],
   controllers: [AppController],
   providers: [
