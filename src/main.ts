@@ -29,6 +29,8 @@ async function bootstrap() {
     .addTag('Admin — Products', 'Gestão de produtos e API Keys')
     .addTag('Admin — VPS', 'Gestão de servidores VPS')
     .addTag('Admin — Activity Log', 'Log de atividades dos usuários admin')
+    .addTag('Admin — Health', 'Status de saúde das VPS')
+    .addTag('Admin — Logs', 'Logs de auditoria das requisições')
     .addTag('Data Plane — Instances', 'Gerenciamento de instâncias WhatsApp')
     .addTag(
       'Data Plane — Messages',
@@ -82,13 +84,15 @@ async function bootstrap() {
   };
   SwaggerModule.setup('docs/data', app, dataplaneDocument);
 
-  await app.listen(3000, '0.0.0.0');
-  console.log(`Softconnect API rodando em: http://127.0.0.1:3000/api/v1`);
+  const PORT = process.env.PORT || 3001;
+
+  await app.listen(PORT, '0.0.0.0');
+  console.log(`Softconnect API rodando em: http://127.0.0.1:${PORT}/api/v1`);
   console.log(
-    `Swagger Admin API disponível em: http://127.0.0.1:3000/docs/admin`,
+    `Swagger Admin API disponível em: http://127.0.0.1:${PORT}/docs/admin`,
   );
   console.log(
-    `Swagger Data Plane disponível em: http://127.0.0.1:3000/docs/data`,
+    `Swagger Data Plane disponível em: http://127.0.0.1:${PORT}/docs/data`,
   );
 }
 void bootstrap();

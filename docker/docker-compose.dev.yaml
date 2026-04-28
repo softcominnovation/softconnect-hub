@@ -21,7 +21,6 @@ services:
       - REDIS_URL=redis://redis_dev:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - JWT_SECRET=${JWT_SECRET_DEV}
-      - ADMIN_SECRET=${ADMIN_SECRET}
       - ADMIN_JWT_EXPIRY=86400
       - DEFAULT_RATE_LIMIT=100
       - PROXY_TIMEOUT_MS=15000
@@ -31,6 +30,9 @@ services:
       - AUDIT_FLUSH_INTERVAL_MS=1000
       - AUDIT_FLUSH_BATCH_SIZE=100
       - DEFAULT_ADAPTER_TYPE=evolution
+      # --- System Monitor do Hub (opcional) ---
+      # - HUB_MONITOR_URL=${HUB_MONITOR_URL}
+      # - HUB_MONITOR_API_KEY=${HUB_MONITOR_API_KEY}
     deploy:
       mode: replicated
       replicas: 1            # dev usa apenas 1 réplica para economizar recursos

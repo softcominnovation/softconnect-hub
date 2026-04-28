@@ -8,8 +8,8 @@
 ## Contexto da Sessão ou fase
 
 **Projeto:** SoftConnect 2.0
-**Etapa atual:** Passo 6.5 — Reorganização de Módulos `src/modules/` (implementado — build limpo, 98/98 testes — aguardando gate de validação do desenvolvedor)
-**Objetivo desta sessão:** Passo 6.5 implementado. Módulos de endpoint (admin, chat, instance, message, proxy, queue, settings, webhook) movidos para `src/modules/`. Infraestrutura (adapters, audit, auth, cache, config, prisma, providers, resolver) permanece em `src/`. `npx tsc --noEmit` sem erros, 98/98 testes passando.
+**Etapa atual:** Passo 7.5 — System Monitor Integration (implementado — 105/105 testes)
+**Objetivo desta sessão:** Passo 7.5 implementado. Integração opcional com agente system-monitor nas VPS (`monitorUrl`, `monitorApiKey` opcionais no modelo `VpsServer`). `HealthCheckService.collectMetrics()` coleta métricas fire-and-forget após cada check e escreve no Redis `vps:metrics:{vpsId}` com TTL 90s. `GET /admin/health` agora inclui `systemMetrics` quando disponível. Novo endpoint `GET /admin/health/hub/metrics` para métricas do hub (controlado por `HUB_MONITOR_URL` e `HUB_MONITOR_API_KEY` opcionais). Schema migrado: `add_monitor_fields_to_vps`. Ausência de configuração é totalmente transparente. 105/105 testes passando.
 
 ---
 
@@ -30,8 +30,8 @@ Leia os seguintes arquivos integralmente, nesta ordem, antes de responder:
 
 Esta etapa está concluída e aguardando gate de validação.
 
-ETAPA ATUAL    : Passo 6  Filas Assíncronas & Envio em Lote (BullMQ)
-ETAPA ANTERIOR : Passo 5  Controllers do Data Plane (gate aprovado)
+ETAPA ATUAL    : Passo 7  Health Check Service & Admin Logs
+ETAPA ANTERIOR : Passo 6.5  Reorganização de Módulos src/modules/ (gate aprovado)
 ETAPA ANTERIOR : Passo 4  Implementação do EvolutionAdapter (gate aprovado)
 ETAPA ANTERIOR : Passo 3  Dynamic Adapters & Adapter Registry (gate aprovado)
 ETAPA ANTERIOR : Passo 2  Admin Plane & Segurança (gate aprovado)

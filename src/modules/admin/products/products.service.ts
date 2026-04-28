@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { Product } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { CacheService } from '../../../cache/cache.service';
@@ -37,8 +42,19 @@ export class ProductsService {
 
       return { ...this.stripHash(product), apiKey };
     } catch (err) {
-      if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (
+        err instanceof PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
         throw new ConflictException('A product with this slug already exists');
+      }
+      if (
+        err instanceof PrismaClientKnownRequestError &&
+        err.code === 'P2003'
+      ) {
+        throw new UnprocessableEntityException(
+          'vpsId inválido: VPS não encontrada',
+        );
       }
       throw err;
     }
@@ -64,13 +80,25 @@ export class ProductsService {
   async update(id: string, dto: UpdateProductDto): Promise<SafeProduct> {
     await this.assertExists(id);
 
-    const updated = await this.prisma.product.update({
-      where: { id },
-      data: dto,
-    });
+    try {
+      const updated = await this.prisma.product.update({
+        where: { id },
+        data: dto,
+      });
 
-    await this.cache.del(`auth:${updated.apiKeyHash}`);
-    return this.stripHash(updated);
+      await this.cache.del(`auth:${updated.apiKeyHash}`);
+      return this.stripHash(updated);
+    } catch (err) {
+      if (
+        err instanceof PrismaClientKnownRequestError &&
+        err.code === 'P2003'
+      ) {
+        throw new UnprocessableEntityException(
+          'vpsId inválido: VPS não encontrada',
+        );
+      }
+      throw err;
+    }
   }
 
   async deactivate(id: string): Promise<SafeProduct> {

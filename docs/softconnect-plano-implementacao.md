@@ -576,33 +576,29 @@ Imports de dentro de `src/common/` para outros módulos **não mudam** — `comm
 
 ### ✅ Validação do Desenvolvedor — Passo 6.5
 
-- [ ] Confirmar estrutura de diretórios: `src/modules/` existe e contém os 16 módulos
-- [ ] Confirmar que `src/` contém apenas: `main.ts`, `app.module.ts`, `app.controller.ts`, `app.service.ts`, `common/`
-- [ ] Confirmar que a aplicação sobe localmente sem erros (`npm run start:dev`)
-- [ ] Confirmar que todos os testes continuam passando após a reorganização
-- [ ] Confirmar que nenhum endpoint mudou (contrato de API 100% preservado)
-
-> **🔒 O Passo 7 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
+- [x] Confirmar estrutura de diretórios: `src/modules/` existe e contém os 16 módulos
+- [x] Confirmar que `src/` contém apenas: `main.ts`, `app.module.ts`, `app.controller.ts`, `app.service.ts`, `common/`
+- [x] Confirmar que a aplicação sobe localmente sem erros (`npm run start:dev`)
+- [x] Confirmar que todos os testes continuam passando após a reorganização
+- [x] Confirmar que nenhum endpoint mudou (contrato de API 100% preservado)
 
 ---
 
 ## Passo 7: Webhooks Completos e Health Check
 
-> **🔒 Este passo está bloqueado. O Passo 6 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
-
 *Objetivo: Finalizar o sistema de webhook pass-through, circuit breaker e monitoramento proativo de VPS.*
 
 ### 7.1 — Health Check Service
 
-- [ ] Criar `HealthCheckService` com CRON a cada 60s
-- [ ] Para cada `VpsServer` ativo: chamar health check via adapter, registrar resultado em `HealthCheck` (status, responseMs, errorMsg)
-- [ ] Após 3 checks consecutivos `unhealthy`: marcar `VpsServer.isHealthy = false` + atualizar Redis `vps:health:{vpsId}`
-- [ ] Recovery: ao voltar healthy, atualizar campo e Redis
-- [ ] Expor `GET /admin/health` com status consolidado de todas as VPS
+- [x] Criar `HealthCheckService` com CRON a cada 60s
+- [x] Para cada `VpsServer` ativo: chamar health check via adapter, registrar resultado em `HealthCheck` (status, responseMs, errorMsg)
+- [x] Após 3 checks consecutivos `unhealthy`: marcar `VpsServer.isHealthy = false` + atualizar Redis `vps:health:{vpsId}`
+- [x] Recovery: ao voltar healthy, atualizar campo e Redis
+- [x] Expor `GET /admin/health` com status consolidado de todas as VPS
 
 ### 7.2 — Logs admin
 
-- [ ] Implementar `GET /admin/logs` — consulta paginada de `AuditLog` no Postgres com filtros por produto, período e status
+- [x] Implementar `GET /admin/logs` — consulta paginada de `AuditLog` no Postgres com filtros por produto, período e status
 
 ### ✅ Validação do Desenvolvedor — Passo 7
 
@@ -615,6 +611,8 @@ Imports de dentro de `src/common/` para outros módulos **não mudam** — `comm
 ---
 
 ## Passo 8: Revisão e Refinamento da Documentação OpenAPI
+
+> **🔒 Este passo está bloqueado. O Passo 7 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
 
 *Objetivo: Garantir que toda a API esteja completamente documentada com schemas de request/response, exemplos e descrições precisas.*
 

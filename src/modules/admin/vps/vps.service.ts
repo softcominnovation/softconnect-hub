@@ -1,15 +1,26 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { VpsServer } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
-import { decryptAES256GCM, encryptAES256GCM } from '../../../common/crypto.util';
+import {
+  decryptAES256GCM,
+  encryptAES256GCM,
+} from '../../../common/crypto.util';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateVpsDto } from './dto/create-vps.dto';
 import { UpdateVpsDto } from './dto/update-vps.dto';
 
-type DecryptedVps = Omit<VpsServer, 'providerApiKey' | 'managerApiKey'> & {
+type DecryptedVps = Omit<
+  VpsServer,
+  'providerApiKey' | 'managerApiKey' | 'monitorApiKey'
+> & {
   providerApiKey: string;
   managerApiKey: string | null;
+  monitorApiKey: string | null;
 };
 
 @Injectable()
@@ -36,12 +47,19 @@ export class VpsService {
           managerApiKey: dto.managerApiKey
             ? encryptAES256GCM(dto.managerApiKey, key)
             : null,
+          monitorUrl: dto.monitorUrl ?? null,
+          monitorApiKey: dto.monitorApiKey
+            ? encryptAES256GCM(dto.monitorApiKey, key)
+            : null,
         },
       });
 
       return this.decrypt(vps);
     } catch (err) {
-      if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (
+        err instanceof PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
         throw new ConflictException('A VPS with this subdomain already exists');
       }
       throw err;
@@ -57,13 +75,16 @@ export class VpsService {
     await this.assertExists(id);
 
     const key = this.encryptionKey;
-    const data: Partial<VpsServer> = { ...dto };
+    const data: Record<string, unknown> = { ...dto };
 
     if (dto.providerApiKey) {
       data.providerApiKey = encryptAES256GCM(dto.providerApiKey, key);
     }
     if (dto.managerApiKey) {
       data.managerApiKey = encryptAES256GCM(dto.managerApiKey, key);
+    }
+    if (dto.monitorApiKey) {
+      data.monitorApiKey = encryptAES256GCM(dto.monitorApiKey, key);
     }
 
     const vps = await this.prisma.vpsServer.update({ where: { id }, data });
@@ -87,6 +108,9 @@ export class VpsService {
       providerApiKey: decryptAES256GCM(vps.providerApiKey, key),
       managerApiKey: vps.managerApiKey
         ? decryptAES256GCM(vps.managerApiKey, key)
+        : null,
+      monitorApiKey: vps.monitorApiKey
+        ? decryptAES256GCM(vps.monitorApiKey, key)
         : null,
     };
   }

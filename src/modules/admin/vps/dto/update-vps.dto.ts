@@ -70,4 +70,19 @@ export class UpdateVpsDto {
     required: false,
   })
   isActive?: boolean;
+
+  @ApiProperty({
+    description:
+      'URL do endpoint do system-monitor na VPS (ex: https://monitor.evo01.softconnect.net.br)',
+    example: 'https://monitor.evo01.softconnect.net.br',
+    required: false,
+  })
+  monitorUrl?: string;
+
+  @ApiProperty({
+    description: 'API Key do system-monitor (re-criptografada ao alterar)',
+    example: 'chave-monitor-secreta',
+    required: false,
+  })
+  monitorApiKey?: string;
 }

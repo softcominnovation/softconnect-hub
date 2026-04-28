@@ -3,6 +3,8 @@ import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AdaptersModule } from './adapters/adapters.module';
 import { AdminAdaptersModule } from './modules/admin/adapters/adapters.module';
 import { AdminAuthModule } from './modules/admin/auth/admin-auth.module';
+import { HealthModule } from './modules/admin/health/health.module';
+import { AdminLogsModule } from './modules/admin/logs/logs.module';
 import { ProductsModule } from './modules/admin/products/products.module';
 import { VpsModule } from './modules/admin/vps/vps.module';
 import { AdminActivityModule } from './modules/admin/activity/activity.module';
@@ -43,6 +45,8 @@ import { WebhookModule } from './modules/webhook/webhook.module';
     AdminUsersModule,
     AuditModule,
     ResolverModule,
+    HealthModule,
+    AdminLogsModule,
     InstanceModule,
     MessageModule,
     ChatModule,
