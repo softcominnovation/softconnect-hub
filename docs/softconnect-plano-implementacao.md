@@ -35,8 +35,9 @@
 | **Passo 5** — Controllers do Data Plane | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 5.5** — Correções de Contrato & Novos Módulos (sessão 24/04) | ✅ **Aplicado — 91/91 testes, build limpo** |
 | **Passo 5.6** — Migração para ID-Based Routing no Data Plane | ✅ **Implementado — aguardando gate de validação** |
-| **Passo 6** — Filas Assíncronas & Envio em Lote (BullMQ) | ⏳ **Implementado — aguardando gate do Passo 5.6** |
-| Passos 7 em diante | 🔒 Bloqueados até aprovação do Passo 6 |
+| **Passo 6** — Filas Assíncronas & Envio em Lote (BullMQ) | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 6.5** — Reorganização de Módulos (`src/modules/`) | ✅ **Implementado — build limpo, 98/98 testes — Aguardando gate de validação** |
+| Passos 7 em diante | 🔒 Bloqueados até aprovação do Passo 6.5 |
 
 ---
 
@@ -268,7 +269,7 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 ### 5.3 — Interceptors e infraestrutura transversal
 
 - [x] Criar `AuditInterceptor` — captura request/response e dispara `auditService.log(data)` **sem await**
-- [x] Criar `AuditService` — buffer write-behind, flush a cada `AUDIT_FLUSH_INTERVAL_MS` ou `AUDIT_FLUSH_BATCH_SIZE` registros
+- [x] Criar `AuditService` — buffer write-behind, flush a cada `AUDIT_FLUSH_INTERVAL_MS` ou `AUDIT_FLUSH_BATCH_SIZE` registros; backpressure com `AUDIT_BUFFER_MAX_SIZE` (load shedding + log de alerta por episódio)
 - [x] Configurar rate limiting via Redis (chave `rate:{productId}`, janela 1s) — `RateLimitGuard` implementado
 - [x] Criar `TimeoutInterceptor` e `HttpExceptionFilter` globais
 
@@ -277,7 +278,7 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 - [x] Testes de integração (e2e): hot path completo `sendText` — verificar latência < 10ms de overhead do Hub (excluindo a chamada ao provider)
 - [x] Testes de integração: `ApiKeyGuard` — apikey inválida retorna 401, apikey inativa retorna 401
 - [x] Testes de integração: rate limit excedido retorna 429
-- [x] Testes unitários: `AuditService` — verificar que o buffer faz flush por tamanho e por tempo
+- [x] Testes unitários: `AuditService` — verificar que o buffer faz flush por tamanho e por tempo; verificar backpressure (descarte acima do limite, log de alerta único por episódio, recuperação)
 - [x] Testes unitários: `InstanceResolver` — HIT no Redis, MISS com fallback ao Postgres e cache posterior
 
 ### ✅ Validação do Desenvolvedor — Passo 5
@@ -436,8 +437,6 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 - [x] Confirmar que passar UUID de instância de outro produto retorna 404 (isolamento por produto)
 - [x] Confirmar que a migration `init_v2_id_routing` foi aplicada limpa no banco dev
 
-> **🔒 O gate de validação do Passo 6 só pode ser aprovado após este passo estar concluído.**
-
 ---
 
 ## Passo 6: Filas Assíncronas & Envio em Lote (BullMQ)
@@ -475,11 +474,113 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 
 ### ✅ Validação do Desenvolvedor — Passo 6
 
-- [ ] Disparar um lote real em dev e acompanhar a execução no Portainer (logs)
-- [ ] Confirmar que o `BatchJob` no Postgres reflete corretamente o resultado ao final (incluindo cenário de falhas parciais)
-- [ ] Testar o endpoint de status `GET /message/batch/{batchJobId}/status` após o lote completar
-- [ ] Confirmar que o relay de webhook funciona com `hub_relay: true` usando uma instância de teste
-- [ ] Avaliar ajustes, melhorias ou correções
+- [x] Disparar um lote real em dev e acompanhar a execução no Portainer (logs)
+- [x] Confirmar que o `BatchJob` no Postgres reflete corretamente o resultado ao final (incluindo cenário de falhas parciais)
+- [x] Testar o endpoint de status `GET /message/batch/{batchJobId}/status` após o lote completar
+- [x] Confirmar que o relay de webhook funciona com `hub_relay: true` usando uma instância de teste
+- [x] Avaliar ajustes, melhorias ou correções
+
+> **🔒 O Passo 7 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
+
+---
+
+## Passo 6.5: Reorganização de Módulos — `src/modules/`
+
+> **🔒 Este passo está bloqueado. O Passo 6 deve ser concluído e o gate de validação do desenvolvedor aprovado antes de iniciar qualquer tarefa aqui.**
+
+*Objetivo: Mover todos os módulos NestJS de `src/` para `src/modules/`, mantendo `src/` apenas com os arquivos raiz da aplicação (`main.ts`, `app.module.ts`, `app.controller.ts`, `app.service.ts`) e os diretórios de utilitários transversais (`common/`). Esta é uma refatoração puramente estrutural — zero mudança de comportamento, zero alteração de schema ou contrato de API.*
+
+---
+
+### O que move para `src/modules/`
+
+Todos os diretórios que contêm um arquivo `*.module.ts` são módulos NestJS e devem ser movidos:
+
+| Diretório atual | Destino |
+|---|---|
+| `src/adapters/` | `src/modules/adapters/` |
+| `src/admin/` | `src/modules/admin/` |
+| `src/audit/` | `src/modules/audit/` |
+| `src/auth/` | `src/modules/auth/` |
+| `src/cache/` | `src/modules/cache/` |
+| `src/chat/` | `src/modules/chat/` |
+| `src/config/` | `src/modules/config/` |
+| `src/instance/` | `src/modules/instance/` |
+| `src/message/` | `src/modules/message/` |
+| `src/prisma/` | `src/modules/prisma/` |
+| `src/providers/` | `src/modules/providers/` |
+| `src/proxy/` | `src/modules/proxy/` |
+| `src/queue/` | `src/modules/queue/` |
+| `src/resolver/` | `src/modules/resolver/` |
+| `src/settings/` | `src/modules/settings/` |
+| `src/webhook/` | `src/modules/webhook/` |
+
+### O que NÃO move
+
+| Diretório/arquivo | Motivo |
+|---|---|
+| `src/main.ts` | Bootstrap da aplicação — raiz |
+| `src/app.module.ts` | Módulo raiz — importa todos os outros |
+| `src/app.controller.ts` | Health check raiz |
+| `src/app.service.ts` | Serviço raiz |
+| `src/common/` | Utilitários transversais (decorators, filters, interceptors) — sem `*.module.ts` próprio |
+
+---
+
+### Impacto nos imports — regra geral
+
+Todos os imports relativos que saem de dentro de um módulo em direção a outro módulo passam a ter um nível adicional de `../`:
+
+```
+// Antes (ex: src/audit/audit.service.ts importando PrismaService)
+import { PrismaService } from '../prisma/prisma.service';
+
+// Depois (ex: src/modules/audit/audit.service.ts)
+import { PrismaService } from '../prisma/prisma.service';   // ← mesmo nível em src/modules/
+```
+
+Imports de `src/app.module.ts` para os módulos passam de `'./cache/cache.module'` para `'./modules/cache/cache.module'`.
+
+Imports de dentro de `src/common/` para outros módulos **não mudam** — `common/` não foi movido.
+
+---
+
+### 6.5.1 — Mover os diretórios
+
+- [x] Criar o diretório `src/modules/`
+- [x] Mover apenas os módulos correspondentes a endpoints: `admin/`, `chat/`, `instance/`, `message/`, `proxy/`, `queue/`, `settings/`, `webhook/`
+- [x] Confirmar que nenhum arquivo `.spec.ts` ficou para trás
+
+### 6.5.2 — Atualizar imports em `src/app.module.ts`
+
+- [x] Atualizar todos os `import ... from './NomeDoModulo/...'` para `import ... from './modules/NomeDoModulo/...'` (apenas para os 8 módulos de endpoint)
+- [x] Manter imports de infraestrutura (`./adapters/`, `./audit/`, `./cache/`, etc.) sem prefixo `modules/`
+
+### 6.5.3 — Atualizar imports internos entre módulos
+
+- [x] Nos módulos em `src/modules/` (nível 2 de `src/`): `../infraestrutura/` → `../../infraestrutura/`
+- [x] Nos arquivos de `src/modules/admin/submodulo/` (nível 3): `../../infraestrutura/` → `../../../infraestrutura/`
+- [x] Verificar que importações cruzadas dentro de `src/modules/admin/` continuam com `../` correto
+
+### 6.5.4 — Atualizar imports de `src/common/` para os módulos
+
+- [x] Módulos em `src/modules/` (nível 2): `../common/` → `../../common/`
+- [x] Arquivos em `src/modules/admin/submodulo/` (nível 3): `../../common/` → `../../../common/`
+- [x] Arquivos de infraestrutura devolvidos a `src/` (`auth/`, `resolver/`): `../../common/` revertido para `../common/`
+
+### 6.5.5 — Validar build e testes
+
+- [x] Executar `npx tsc --noEmit` — zero erros de compilação ✅
+- [x] Executar `npx jest --no-coverage` — 98/98 testes passando ✅
+- [ ] Confirmar que o build de produção (`npm run build`) completa sem erros
+
+### ✅ Validação do Desenvolvedor — Passo 6.5
+
+- [ ] Confirmar estrutura de diretórios: `src/modules/` existe e contém os 16 módulos
+- [ ] Confirmar que `src/` contém apenas: `main.ts`, `app.module.ts`, `app.controller.ts`, `app.service.ts`, `common/`
+- [ ] Confirmar que a aplicação sobe localmente sem erros (`npm run start:dev`)
+- [ ] Confirmar que todos os testes continuam passando após a reorganização
+- [ ] Confirmar que nenhum endpoint mudou (contrato de API 100% preservado)
 
 > **🔒 O Passo 7 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
 

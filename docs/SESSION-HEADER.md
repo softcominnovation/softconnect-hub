@@ -8,8 +8,8 @@
 ## Contexto da Sessão ou fase
 
 **Projeto:** SoftConnect 2.0
-**Etapa atual:** Passo 6 — Filas Assíncronas & Envio em Lote (BullMQ) (implementado — aguardando gate de validação do desenvolvedor)
-**Objetivo desta sessão:** Passo 6 implementado integralmente (95 testes passando). Migration squash executada (`20260425143633_init_v2_id_routing`). Aguardando gate de validação do desenvolvedor.
+**Etapa atual:** Passo 6.5 — Reorganização de Módulos `src/modules/` (implementado — build limpo, 98/98 testes — aguardando gate de validação do desenvolvedor)
+**Objetivo desta sessão:** Passo 6.5 implementado. Módulos de endpoint (admin, chat, instance, message, proxy, queue, settings, webhook) movidos para `src/modules/`. Infraestrutura (adapters, audit, auth, cache, config, prisma, providers, resolver) permanece em `src/`. `npx tsc --noEmit` sem erros, 98/98 testes passando.
 
 ---
 

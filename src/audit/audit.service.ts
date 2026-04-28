@@ -1,4 +1,9 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -16,10 +21,15 @@ export interface AuditEntry {
 
 @Injectable()
 export class AuditService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(AuditService.name);
   private buffer: AuditEntry[] = [];
   private flushTimer?: ReturnType<typeof setInterval>;
   private readonly flushIntervalMs: number;
   private readonly flushBatchSize: number;
+  private readonly maxBufferSize: number;
+
+  // Controle de estado — evita logar alerta repetidamente por episódio
+  private isUnderPressure = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -33,6 +43,7 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
       'AUDIT_FLUSH_BATCH_SIZE',
       100,
     );
+    this.maxBufferSize = this.config.get<number>('AUDIT_BUFFER_MAX_SIZE', 1000);
   }
 
   onModuleInit() {
@@ -47,6 +58,27 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
   }
 
   log(entry: AuditEntry): void {
+    // ── BACKPRESSURE — load shedding ──────────────────────────────
+    if (this.buffer.length >= this.maxBufferSize) {
+      if (!this.isUnderPressure) {
+        this.isUnderPressure = true;
+        this.logger.warn(
+          `Audit buffer cheio (${this.maxBufferSize} registros). ` +
+            `Postgres pode estar lento ou indisponível. ` +
+            `Novos registros de audit serão descartados até o buffer esvaziar.`,
+        );
+      }
+      return;
+    }
+
+    if (this.isUnderPressure) {
+      this.isUnderPressure = false;
+      this.logger.log(
+        'Audit buffer normalizado — registros voltando a ser aceitos.',
+      );
+    }
+    // ─────────────────────────────────────────────────────────────
+
     this.buffer.push(entry);
     if (this.buffer.length >= this.flushBatchSize) {
       void this.flush();
@@ -70,8 +102,11 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
           errorMsg: e.errorMsg ?? null,
         })),
       });
-    } catch {
-      // silently discard — audit must never block the app
+    } catch (error) {
+      // Registros deste lote são descartados — audit nunca deve bloquear a app
+      this.logger.error(
+        `Falha ao persistir ${entries.length} registros de audit: ${String(error instanceof Error ? error.message : error)}`,
+      );
     }
   }
 }
