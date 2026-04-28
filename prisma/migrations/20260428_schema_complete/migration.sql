@@ -1,4 +1,8 @@
--- CreateTable Product (IF NOT EXISTS — evita erro se já existir)
+-- SoftConnect 2.0 — Schema Completo (migration única e consolidada)
+-- Cria todas as tabelas, índices e relações com IF NOT EXISTS
+-- Adiciona colunas faltantes com IF NOT EXISTS
+
+-- CreateTable Product
 CREATE TABLE IF NOT EXISTS "Product" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -15,7 +19,7 @@ CREATE TABLE IF NOT EXISTS "Product" (
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable VpsServer (IF NOT EXISTS)
+-- CreateTable VpsServer
 CREATE TABLE IF NOT EXISTS "VpsServer" (
     "id" TEXT NOT NULL,
     "label" TEXT NOT NULL,
@@ -38,7 +42,7 @@ CREATE TABLE IF NOT EXISTS "VpsServer" (
     CONSTRAINT "VpsServer_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable Instance (IF NOT EXISTS)
+-- CreateTable Instance
 CREATE TABLE IF NOT EXISTS "Instance" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
@@ -55,7 +59,7 @@ CREATE TABLE IF NOT EXISTS "Instance" (
     CONSTRAINT "Instance_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable WebhookConfig (IF NOT EXISTS)
+-- CreateTable WebhookConfig
 CREATE TABLE IF NOT EXISTS "WebhookConfig" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
@@ -68,7 +72,7 @@ CREATE TABLE IF NOT EXISTS "WebhookConfig" (
     CONSTRAINT "WebhookConfig_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable AuditLog (IF NOT EXISTS)
+-- CreateTable AuditLog
 CREATE TABLE IF NOT EXISTS "AuditLog" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
@@ -85,7 +89,7 @@ CREATE TABLE IF NOT EXISTS "AuditLog" (
     CONSTRAINT "AuditLog_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable AdminUser (IF NOT EXISTS)
+-- CreateTable AdminUser
 CREATE TABLE IF NOT EXISTS "AdminUser" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -99,7 +103,7 @@ CREATE TABLE IF NOT EXISTS "AdminUser" (
     CONSTRAINT "AdminUser_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable AdminActivityLog (IF NOT EXISTS)
+-- CreateTable AdminActivityLog
 CREATE TABLE IF NOT EXISTS "AdminActivityLog" (
     "id" TEXT NOT NULL,
     "adminUserId" TEXT NOT NULL,
@@ -111,7 +115,7 @@ CREATE TABLE IF NOT EXISTS "AdminActivityLog" (
     CONSTRAINT "AdminActivityLog_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable HealthCheck (IF NOT EXISTS)
+-- CreateTable HealthCheck
 CREATE TABLE IF NOT EXISTS "HealthCheck" (
     "id" TEXT NOT NULL,
     "vpsId" TEXT NOT NULL,
@@ -123,7 +127,7 @@ CREATE TABLE IF NOT EXISTS "HealthCheck" (
     CONSTRAINT "HealthCheck_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable BatchJob (IF NOT EXISTS)
+-- CreateTable BatchJob
 CREATE TABLE IF NOT EXISTS "BatchJob" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
@@ -138,7 +142,7 @@ CREATE TABLE IF NOT EXISTS "BatchJob" (
     CONSTRAINT "BatchJob_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex — só cria se não existir
+-- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "Product_slug_key" ON "Product"("slug");
 CREATE UNIQUE INDEX IF NOT EXISTS "Product_apiKeyHash_key" ON "Product"("apiKeyHash");
 CREATE UNIQUE INDEX IF NOT EXISTS "VpsServer_subdomain_key" ON "VpsServer"("subdomain");
@@ -146,3 +150,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "Instance_hubToken_key" ON "Instance"("hubToke
 CREATE UNIQUE INDEX IF NOT EXISTS "Instance_vpsId_instanceName_key" ON "Instance"("vpsId", "instanceName");
 CREATE UNIQUE INDEX IF NOT EXISTS "Instance_productId_instanceName_key" ON "Instance"("productId", "instanceName");
 CREATE UNIQUE INDEX IF NOT EXISTS "AdminUser_email_key" ON "AdminUser"("email");
+
+-- Adiciona colunas faltantes se não existirem (para bancos parcialmente migrados)
+ALTER TABLE IF EXISTS "VpsServer"
+ADD COLUMN IF NOT EXISTS "monitorUrl" TEXT,
+ADD COLUMN IF NOT EXISTS "monitorApiKey" TEXT;
