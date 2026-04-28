@@ -1,5 +1,5 @@
--- CreateTable
-CREATE TABLE "Product" (
+-- CreateTable Product (IF NOT EXISTS — evita erro se já existir)
+CREATE TABLE IF NOT EXISTS "Product" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
@@ -15,8 +15,8 @@ CREATE TABLE "Product" (
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "VpsServer" (
+-- CreateTable VpsServer (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "VpsServer" (
     "id" TEXT NOT NULL,
     "label" TEXT NOT NULL,
     "subdomain" TEXT NOT NULL,
@@ -27,6 +27,8 @@ CREATE TABLE "VpsServer" (
     "managerType" TEXT,
     "managerUrl" TEXT,
     "managerApiKey" TEXT,
+    "monitorUrl" TEXT,
+    "monitorApiKey" TEXT,
     "isHealthy" BOOLEAN NOT NULL DEFAULT true,
     "lastHealthAt" TIMESTAMP(3),
     "isActive" BOOLEAN NOT NULL DEFAULT true,
@@ -36,8 +38,8 @@ CREATE TABLE "VpsServer" (
     CONSTRAINT "VpsServer_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "Instance" (
+-- CreateTable Instance (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "Instance" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
     "vpsId" TEXT NOT NULL,
@@ -53,8 +55,8 @@ CREATE TABLE "Instance" (
     CONSTRAINT "Instance_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "WebhookConfig" (
+-- CreateTable WebhookConfig (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "WebhookConfig" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
     "url" TEXT NOT NULL,
@@ -66,8 +68,8 @@ CREATE TABLE "WebhookConfig" (
     CONSTRAINT "WebhookConfig_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "AuditLog" (
+-- CreateTable AuditLog (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "AuditLog" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
     "instanceId" TEXT,
@@ -83,8 +85,8 @@ CREATE TABLE "AuditLog" (
     CONSTRAINT "AuditLog_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "AdminUser" (
+-- CreateTable AdminUser (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "AdminUser" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -97,8 +99,8 @@ CREATE TABLE "AdminUser" (
     CONSTRAINT "AdminUser_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "AdminActivityLog" (
+-- CreateTable AdminActivityLog (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "AdminActivityLog" (
     "id" TEXT NOT NULL,
     "adminUserId" TEXT NOT NULL,
     "action" TEXT NOT NULL,
@@ -109,8 +111,8 @@ CREATE TABLE "AdminActivityLog" (
     CONSTRAINT "AdminActivityLog_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "HealthCheck" (
+-- CreateTable HealthCheck (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "HealthCheck" (
     "id" TEXT NOT NULL,
     "vpsId" TEXT NOT NULL,
     "status" TEXT NOT NULL,
@@ -121,8 +123,8 @@ CREATE TABLE "HealthCheck" (
     CONSTRAINT "HealthCheck_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "BatchJob" (
+-- CreateTable BatchJob (IF NOT EXISTS)
+CREATE TABLE IF NOT EXISTS "BatchJob" (
     "id" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
     "instanceId" TEXT,
@@ -136,53 +138,11 @@ CREATE TABLE "BatchJob" (
     CONSTRAINT "BatchJob_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE UNIQUE INDEX "Product_slug_key" ON "Product"("slug");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Product_apiKeyHash_key" ON "Product"("apiKeyHash");
-
--- CreateIndex
-CREATE UNIQUE INDEX "VpsServer_subdomain_key" ON "VpsServer"("subdomain");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Instance_hubToken_key" ON "Instance"("hubToken");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Instance_vpsId_instanceName_key" ON "Instance"("vpsId", "instanceName");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Instance_productId_instanceName_key" ON "Instance"("productId", "instanceName");
-
--- CreateIndex
-CREATE UNIQUE INDEX "AdminUser_email_key" ON "AdminUser"("email");
-
--- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_vpsId_fkey" FOREIGN KEY ("vpsId") REFERENCES "VpsServer"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Instance" ADD CONSTRAINT "Instance_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Instance" ADD CONSTRAINT "Instance_vpsId_fkey" FOREIGN KEY ("vpsId") REFERENCES "VpsServer"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "WebhookConfig" ADD CONSTRAINT "WebhookConfig_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_instanceId_fkey" FOREIGN KEY ("instanceId") REFERENCES "Instance"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "AdminActivityLog" ADD CONSTRAINT "AdminActivityLog_adminUserId_fkey" FOREIGN KEY ("adminUserId") REFERENCES "AdminUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "HealthCheck" ADD CONSTRAINT "HealthCheck_vpsId_fkey" FOREIGN KEY ("vpsId") REFERENCES "VpsServer"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "BatchJob" ADD CONSTRAINT "BatchJob_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "BatchJob" ADD CONSTRAINT "BatchJob_instanceId_fkey" FOREIGN KEY ("instanceId") REFERENCES "Instance"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- CreateIndex — só cria se não existir
+CREATE UNIQUE INDEX IF NOT EXISTS "Product_slug_key" ON "Product"("slug");
+CREATE UNIQUE INDEX IF NOT EXISTS "Product_apiKeyHash_key" ON "Product"("apiKeyHash");
+CREATE UNIQUE INDEX IF NOT EXISTS "VpsServer_subdomain_key" ON "VpsServer"("subdomain");
+CREATE UNIQUE INDEX IF NOT EXISTS "Instance_hubToken_key" ON "Instance"("hubToken");
+CREATE UNIQUE INDEX IF NOT EXISTS "Instance_vpsId_instanceName_key" ON "Instance"("vpsId", "instanceName");
+CREATE UNIQUE INDEX IF NOT EXISTS "Instance_productId_instanceName_key" ON "Instance"("productId", "instanceName");
+CREATE UNIQUE INDEX IF NOT EXISTS "AdminUser_email_key" ON "AdminUser"("email");
