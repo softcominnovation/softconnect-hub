@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AdaptersModule } from './adapters/adapters.module';
+import { AdminInstancesModule } from './modules/admin/instances/admin-instances.module';
 import { AdminAdaptersModule } from './modules/admin/adapters/adapters.module';
 import { AdminAuthModule } from './modules/admin/auth/admin-auth.module';
 import { HealthModule } from './modules/admin/health/health.module';
@@ -40,6 +41,7 @@ import { WebhookModule } from './modules/webhook/webhook.module';
     ProductsModule,
     VpsModule,
     AdminAdaptersModule,
+    AdminInstancesModule,
     AdminActivityModule,
     DashboardAuthModule,
     AdminUsersModule,

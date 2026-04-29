@@ -10,6 +10,7 @@ import {
   decryptAES256GCM,
   encryptAES256GCM,
 } from '../../../common/crypto.util';
+import { CacheService } from '../../../cache/cache.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateVpsDto } from './dto/create-vps.dto';
 import { UpdateVpsDto } from './dto/update-vps.dto';
@@ -28,6 +29,7 @@ export class VpsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly cache: CacheService,
   ) {}
 
   async create(dto: CreateVpsDto): Promise<DecryptedVps> {
@@ -88,6 +90,17 @@ export class VpsService {
     }
 
     const vps = await this.prisma.vpsServer.update({ where: { id }, data });
+
+    if (dto.providerApiKey) {
+      const instances = await this.prisma.instance.findMany({
+        where: { vpsId: id, isActive: true },
+        select: { id: true },
+      });
+      await Promise.all(
+        instances.map((i) => this.cache.del(`instance:${i.id}`)),
+      );
+    }
+
     return this.decrypt(vps);
   }
 

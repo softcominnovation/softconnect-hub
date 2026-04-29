@@ -113,6 +113,27 @@ export class ProductsService {
     return this.stripHash(updated);
   }
 
+  async rotateKey(id: string): Promise<SafeProduct & { apiKey: string }> {
+    const current = await this.prisma.product.findUnique({
+      where: { id },
+      select: { apiKeyHash: true },
+    });
+
+    if (!current) throw new NotFoundException(`Produto ${id} não encontrado`);
+
+    await this.cache.del(`auth:${current.apiKeyHash}`);
+
+    const newApiKey = generateApiKey();
+    const newApiKeyHash = hashSHA256(newApiKey);
+
+    const updated = await this.prisma.product.update({
+      where: { id },
+      data: { apiKeyHash: newApiKeyHash },
+    });
+
+    return { ...this.stripHash(updated), apiKey: newApiKey };
+  }
+
   private stripHash(product: Product): SafeProduct {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { apiKeyHash, ...safe } = product;

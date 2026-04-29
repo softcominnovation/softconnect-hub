@@ -52,12 +52,13 @@ model VpsServer {
 }
 
 model Instance {
-  id            String   @id @default(uuid())
-  productId     String
-  vpsId         String
-  instanceName  String
-  instanceToken String?
-  hubToken      String   @unique
+  id                 String   @id @default(uuid())
+  productId          String
+  vpsId              String
+  instanceName       String
+  providerInstanceId String?
+  instanceToken      String?
+  hubToken           String   @unique
   phoneNumber   String?
   status        String   @default("disconnected")
   isActive      Boolean  @default(true)

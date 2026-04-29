@@ -23,8 +23,15 @@ describe('EvolutionAdapter', () => {
   describe('Instance methods', () => {
     it('createInstance — delegates to POST /instance/create with dto', async () => {
       const dto = { instanceName: INSTANCE };
-      const expected = { instanceName: INSTANCE, status: 'open' };
-      http.request.mockResolvedValue(expected);
+      const rawResponse = {
+        instance: {
+          instanceName: INSTANCE,
+          instanceId: 'evo-uuid-1',
+          status: 'connecting',
+        },
+        qrcode: { base64: 'abc123' },
+      };
+      http.request.mockResolvedValue(rawResponse);
 
       const result = await adapter.createInstance(CTX, dto);
 
@@ -35,13 +42,25 @@ describe('EvolutionAdapter', () => {
         '/instance/create',
         { ...dto, integration: 'WHATSAPP-BAILEYS' },
       );
-      expect(result).toBe(expected);
+      expect(result).toEqual({
+        instanceName: INSTANCE,
+        instanceId: 'evo-uuid-1',
+        status: 'connecting',
+        qrcode: { base64: 'abc123' },
+      });
     });
 
     it('createInstance — preserves integration when explicitly provided', async () => {
       const dto = { instanceName: INSTANCE, integration: 'WHATSAPP-BUSINESS' };
-      const expected = { instanceName: INSTANCE, status: 'open' };
-      http.request.mockResolvedValue(expected);
+      const rawResponse = {
+        instance: {
+          instanceName: INSTANCE,
+          instanceId: 'evo-uuid-2',
+          status: 'connecting',
+        },
+        qrcode: undefined,
+      };
+      http.request.mockResolvedValue(rawResponse);
 
       const result = await adapter.createInstance(CTX, dto);
 
@@ -52,12 +71,24 @@ describe('EvolutionAdapter', () => {
         '/instance/create',
         { ...dto, integration: 'WHATSAPP-BUSINESS' },
       );
-      expect(result).toBe(expected);
+      expect(result).toEqual({
+        instanceName: INSTANCE,
+        instanceId: 'evo-uuid-2',
+        status: 'connecting',
+        qrcode: undefined,
+      });
     });
 
-    it('fetchInstances — delegates to GET /instance/fetchInstances', async () => {
-      const expected = [{ instanceName: INSTANCE, status: 'open' }];
-      http.request.mockResolvedValue(expected);
+    it('fetchInstances — delegates to GET /instance/fetchInstances and normalizes v1 flat format', async () => {
+      const raw = [
+        {
+          id: 'evo-uuid-1',
+          name: INSTANCE,
+          connectionStatus: 'open',
+          token: 'T1',
+        },
+      ];
+      http.request.mockResolvedValue(raw);
 
       const result = await adapter.fetchInstances(CTX);
 
@@ -67,7 +98,51 @@ describe('EvolutionAdapter', () => {
         CTX.providerApiKey,
         '/instance/fetchInstances',
       );
-      expect(result).toBe(expected);
+      expect(result[0]).toMatchObject({
+        instanceName: INSTANCE,
+        id: 'evo-uuid-1',
+        status: 'open',
+      });
+    });
+
+    it('fetchInstances — normalizes v2 Setting format (Setting.instanceId, name → instanceName)', async () => {
+      const raw = [
+        {
+          name: INSTANCE,
+          connectionStatus: 'close',
+          Setting: { instanceId: 'evo-uuid-setting' },
+        },
+      ];
+      http.request.mockResolvedValue(raw);
+
+      const result = await adapter.fetchInstances(CTX);
+
+      expect(result[0]).toMatchObject({
+        instanceName: INSTANCE,
+        id: 'evo-uuid-setting',
+        status: 'close',
+      });
+    });
+
+    it('fetchInstances — normalizes v2 nested format (instance.instanceId, instance.instanceName)', async () => {
+      const raw = [
+        {
+          instance: {
+            instanceId: 'evo-uuid-nested',
+            instanceName: INSTANCE,
+            status: 'connecting',
+          },
+        },
+      ];
+      http.request.mockResolvedValue(raw);
+
+      const result = await adapter.fetchInstances(CTX);
+
+      expect(result[0]).toMatchObject({
+        instanceName: INSTANCE,
+        id: 'evo-uuid-nested',
+        status: 'connecting',
+      });
     });
 
     it('connectInstance — delegates to GET /instance/connect/:instance', async () => {
@@ -198,7 +273,10 @@ describe('EvolutionAdapter', () => {
     });
 
     it('sendSticker — delegates to POST /message/sendSticker/:instance', async () => {
-      const dto = { number: '5511999998888', sticker: 'https://example.com/sticker.webp' };
+      const dto = {
+        number: '5511999998888',
+        sticker: 'https://example.com/sticker.webp',
+      };
       http.request.mockResolvedValue(msgResponse);
 
       await adapter.sendSticker(CTX, INSTANCE, dto);
@@ -212,7 +290,7 @@ describe('EvolutionAdapter', () => {
       );
     });
 
-    it('sendPresence — delegates to POST /message/sendPresence/:instance', async () => {
+    it('sendPresence — delegates to POST /chat/sendPresence/:instance', async () => {
       const dto = { number: '5511999998888', presence: 'composing' as const };
       http.request.mockResolvedValue(undefined);
 
@@ -222,7 +300,7 @@ describe('EvolutionAdapter', () => {
         'post',
         CTX.providerUrl,
         CTX.providerApiKey,
-        `/message/sendPresence/${INSTANCE}`,
+        `/chat/sendPresence/${INSTANCE}`,
         dto,
       );
     });
@@ -259,7 +337,9 @@ describe('EvolutionAdapter', () => {
 
   describe('Webhook methods', () => {
     it('setWebhook — delegates to POST /webhook/set/:instance', async () => {
-      const dto = { webhook: { enabled: true, url: 'https://n8n.softcom.test/webhook/wh' } };
+      const dto = {
+        webhook: { enabled: true, url: 'https://n8n.softcom.test/webhook/wh' },
+      };
       http.request.mockResolvedValue(undefined);
 
       await adapter.setWebhook(CTX, INSTANCE, dto);

@@ -70,4 +70,16 @@ export class ProductsController {
   deactivate(@Param('id') id: string) {
     return this.productsService.deactivate(id);
   }
+
+  @Post(':id/rotate-key')
+  @ApiOperation({
+    summary:
+      'Rotaciona a API Key do produto — invalida a antiga e retorna nova key uma única vez',
+  })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiResponse({ status: 201, description: 'Nova API Key gerada' })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  rotateKey(@Param('id') id: string) {
+    return this.productsService.rotateKey(id);
+  }
 }

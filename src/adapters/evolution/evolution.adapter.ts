@@ -36,29 +36,86 @@ import { EvolutionHttpService } from './evolution.http';
 export class EvolutionAdapter implements WhatsAppProvider {
   constructor(private readonly http: EvolutionHttpService) {}
 
-  createInstance(
+  async createInstance(
     ctx: ProviderContext,
     dto: CreateInstanceDto,
   ): Promise<InstanceCreatedDto> {
-    return this.http.request(
-      'post',
-      ctx.providerUrl,
-      ctx.providerApiKey,
-      '/instance/create',
-      { ...dto, integration: dto.integration ?? 'WHATSAPP-BAILEYS' },
-    );
+    const raw = await this.http.request<{
+      instance?: {
+        instanceName?: string;
+        instanceId?: string;
+        status?: string;
+      };
+      qrcode?: { base64?: string; code?: string; pairingCode?: string };
+    }>('post', ctx.providerUrl, ctx.providerApiKey, '/instance/create', {
+      ...dto,
+      integration: dto.integration ?? 'WHATSAPP-BAILEYS',
+    });
+
+    return {
+      instanceName: raw.instance?.instanceName ?? dto.instanceName,
+      instanceId: raw.instance?.instanceId,
+      status: raw.instance?.status ?? 'connecting',
+      qrcode: raw.qrcode
+        ? { base64: raw.qrcode.base64, code: raw.qrcode.code }
+        : undefined,
+    };
   }
 
-  fetchInstances(ctx: ProviderContext): Promise<InstanceDto[]> {
-    return this.http.request(
+  async fetchInstances(ctx: ProviderContext): Promise<InstanceDto[]> {
+    interface RawInstance {
+      id?: string;
+      instanceName?: string;
+      status?: string;
+      name?: string;
+      connectionStatus?: string;
+      instance?: {
+        instanceId?: string;
+        instanceName?: string;
+        status?: string;
+      };
+      Setting?: { instanceId?: string };
+    }
+
+    const raw = await this.http.request<RawInstance[]>(
       'get',
       ctx.providerUrl,
       ctx.providerApiKey,
       '/instance/fetchInstances',
     );
+
+    return raw.map((item): InstanceDto => {
+      // v2 nested: { instance: { instanceId, instanceName, status } }
+      if (item.instance?.instanceId) {
+        return {
+          ...item,
+          id: item.instance.instanceId,
+          instanceName: item.instance.instanceName,
+          status: item.instance.status ?? item.connectionStatus,
+        } as InstanceDto;
+      }
+      // v2 Setting: { name, connectionStatus, Setting: { instanceId } }
+      if (item.Setting?.instanceId) {
+        return {
+          ...item,
+          id: item.Setting.instanceId,
+          instanceName: item.name,
+          status: item.connectionStatus,
+        } as InstanceDto;
+      }
+      // v1 flat: { id, name, connectionStatus }
+      return {
+        ...item,
+        instanceName: item.instanceName ?? item.name,
+        status: item.status ?? item.connectionStatus,
+      } as InstanceDto;
+    });
   }
 
-  fetchInstance(ctx: ProviderContext, instanceName: string): Promise<InstanceDto> {
+  fetchInstance(
+    ctx: ProviderContext,
+    instanceName: string,
+  ): Promise<InstanceDto> {
     return this.http.request(
       'get',
       ctx.providerUrl,
@@ -208,7 +265,7 @@ export class EvolutionAdapter implements WhatsAppProvider {
       'post',
       ctx.providerUrl,
       ctx.providerApiKey,
-      `/message/sendPresence/${instanceName}`,
+      `/chat/sendPresence/${instanceName}`,
       dto,
     );
   }
@@ -324,7 +381,10 @@ export class EvolutionAdapter implements WhatsAppProvider {
     );
   }
 
-  findSettings(ctx: ProviderContext, instanceName: string): Promise<SettingsDto> {
+  findSettings(
+    ctx: ProviderContext,
+    instanceName: string,
+  ): Promise<SettingsDto> {
     return this.http.request(
       'get',
       ctx.providerUrl,

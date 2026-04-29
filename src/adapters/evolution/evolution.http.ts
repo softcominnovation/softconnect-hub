@@ -1,6 +1,7 @@
 import {
   HttpException,
   Injectable,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -19,6 +20,7 @@ interface CircuitBreaker {
 
 @Injectable()
 export class EvolutionHttpService {
+  private readonly logger = new Logger(EvolutionHttpService.name);
   private readonly client: AxiosInstance;
   private readonly threshold: number;
   private readonly resetMs: number;
@@ -99,6 +101,8 @@ export class EvolutionHttpService {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
+        const fullUrl = `${vpsUrl}${path}`;
+        this.logger.log(`[evo:request] ${method.toUpperCase()} ${fullUrl}${data !== undefined ? ` body=${JSON.stringify(data)}` : ''}`);
         const response = await this.client.request<T>({
           method,
           url: `${vpsUrl}${path}`,

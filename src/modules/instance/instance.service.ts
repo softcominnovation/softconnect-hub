@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -19,9 +20,9 @@ import {
 } from '../../providers/whatsapp-provider.interface';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
 
-
 @Injectable()
 export class InstanceService {
+  private readonly logger = new Logger(InstanceService.name);
   private readonly encryptionKeyHex: string;
 
   constructor(
@@ -70,6 +71,7 @@ export class InstanceService {
         productId: product.productId,
         vpsId: vps.id,
         instanceName: dto.instanceName,
+        providerInstanceId: result.instanceId ?? null,
         instanceToken: dto.token,
         hubToken: `hub_${product.productId}_${dto.instanceName}`,
         status: 'disconnected',
@@ -201,21 +203,39 @@ export class InstanceService {
     product: AuthCachePayload,
     instanceId: string,
   ): Promise<void> {
-    const resolved = await this.instanceResolver.resolveById(
-      product.productId,
-      instanceId,
-    );
-    const ctx: ProviderContext = {
-      providerUrl: resolved.providerUrl,
-      providerApiKey: resolved.providerApiKey,
-    };
-    const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    await adapter.deleteInstance(ctx, resolved.instanceName);
-
-    await this.prisma.instance.updateMany({
+    const instance = await this.prisma.instance.findFirst({
       where: { id: instanceId, productId: product.productId },
-      data: { isActive: false },
+      include: { vps: true, product: true },
     });
+
+    if (!instance) {
+      throw new NotFoundException(`Instância "${instanceId}" não encontrada`);
+    }
+
+    const ctx: ProviderContext = {
+      providerUrl: instance.vps.providerUrl,
+      providerApiKey: decryptAES256GCM(
+        instance.vps.providerApiKey,
+        this.encryptionKeyHex,
+      ),
+    };
+    const adapter = this.adapterResolver.resolve(instance.product.adapterType);
+
+    try {
+      await adapter.deleteInstance(ctx, instance.instanceName);
+    } catch (err) {
+      this.logger.warn(
+        `[delete] provider error for instanceId=${instanceId} — continuing with DB soft-delete. error=${(err as Error).message}`,
+      );
+    }
+
+    const deleted = await this.prisma.instance.deleteMany({
+      where: { id: instanceId, productId: product.productId },
+    });
+
+    this.logger.log(
+      `[delete] instanceId=${instanceId} productId=${product.productId} rowsDeleted=${deleted.count}`,
+    );
 
     await this.cache.del(`instance:${instanceId}`);
   }

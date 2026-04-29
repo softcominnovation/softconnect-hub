@@ -10,5 +10,6 @@ import { InstanceService } from './instance.service';
   imports: [PrismaModule, CacheModule, ProviderModule, ResolverModule],
   controllers: [InstanceController],
   providers: [InstanceService],
+  exports: [InstanceService],
 })
 export class InstanceModule {}
