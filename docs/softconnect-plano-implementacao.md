@@ -27,9 +27,9 @@
 | **Passo 0** — Pipeline CI/CD | ✅ **100% Concluído** |
 | **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído — Gate de validação aprovado** |
-| **Passo 2.5** — Dashboard Auth & Usuários Admin | ⏳ **Implementado — Aguardando gate de validação** |
+| **Passo 2.5** — Dashboard Auth & Usuários Admin | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 3** — Dynamic Adapters & Adapter Registry | ✅ **100% Concluído — Gate de validação aprovado** |
-| **Passo 4** — Implementação do EvolutionAdapter | ⏳ **Implementado — Aguardando gate de validação** |
+| **Passo 4** — Implementação do EvolutionAdapter | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Swagger (incremental)** — Admin API + tipagem completa | ✅ **Implementado — rotas admin com schemas, params e query docs** |
 | **Global prefix `/api/v1`** — todas as rotas da API | ✅ **Implementado — `app.setGlobalPrefix('api/v1')` em `main.ts`** |
 | **Passo 5** — Controllers do Data Plane | ✅ **100% Concluído — Gate de validação aprovado** |
