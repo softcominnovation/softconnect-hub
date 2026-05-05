@@ -63,52 +63,39 @@ export class EvolutionAdapter implements WhatsAppProvider {
   }
 
   async fetchInstances(ctx: ProviderContext): Promise<InstanceDto[]> {
-    interface RawInstance {
-      id?: string;
-      instanceName?: string;
-      status?: string;
-      name?: string;
-      connectionStatus?: string;
-      instance?: {
-        instanceId?: string;
-        instanceName?: string;
-        status?: string;
-      };
-      Setting?: { instanceId?: string };
-    }
-
-    const raw = await this.http.request<RawInstance[]>(
+    const raw = await this.http.request<unknown>(
       'get',
       ctx.providerUrl,
       ctx.providerApiKey,
       '/instance/fetchInstances',
     );
 
-    return raw.map((item): InstanceDto => {
-      // v2 nested: { instance: { instanceId, instanceName, status } }
-      if (item.instance?.instanceId) {
-        return {
-          ...item,
-          id: item.instance.instanceId,
-          instanceName: item.instance.instanceName,
-          status: item.instance.status ?? item.connectionStatus,
-        } as InstanceDto;
-      }
-      // v2 Setting: { name, connectionStatus, Setting: { instanceId } }
-      if (item.Setting?.instanceId) {
-        return {
-          ...item,
-          id: item.Setting.instanceId,
-          instanceName: item.name,
-          status: item.connectionStatus,
-        } as InstanceDto;
-      }
-      // v1 flat: { id, name, connectionStatus }
-      return {
-        ...item,
-        instanceName: item.instanceName ?? item.name,
-        status: item.status ?? item.connectionStatus,
-      } as InstanceDto;
+    const list = Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
+
+    return list.map((inst) => {
+      const nested = inst.instance as Record<string, unknown> | undefined;
+      const setting = inst.Setting as Record<string, unknown> | undefined;
+
+      const instanceName =
+        (inst.instanceName as string | undefined) ||
+        (inst.name as string | undefined) ||
+        (nested?.instanceName as string | undefined) ||
+        '';
+
+      const id =
+        (inst.id as string | undefined) ||
+        (nested?.instanceId as string | undefined) ||
+        (inst.instanceId as string | undefined) ||
+        (setting?.instanceId as string | undefined);
+
+      const status =
+        (inst.connectionStatus as string | undefined) ||
+        (nested?.connectionStatus as string | undefined) ||
+        (nested?.status as string | undefined) ||
+        (inst.status as string | undefined) ||
+        'unknown';
+
+      return { ...inst, instanceName, id, status } as unknown as InstanceDto;
     });
   }
 

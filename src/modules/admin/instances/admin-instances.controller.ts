@@ -21,6 +21,10 @@ import { JwtGuard } from '../../../auth/jwt.guard';
 import { CreateInstanceDto } from '../../instance/dto/create-instance.dto';
 import { SendPresenceDto, SendTextDto } from '../../message/dto/message.dto';
 import { AdminInstancesService } from './admin-instances.service';
+import {
+  ImportEvolutionInstanceDto,
+  ImportBulkResultDto,
+} from './dto/import-evolution-instance.dto';
 
 @ApiTags('Admin — Instances')
 @ApiBearerAuth()
@@ -59,10 +63,14 @@ export class AdminInstancesController {
 
   @Get('hub')
   @ApiOperation({
-    summary: 'Listar instâncias do Hub (somente banco, sem consultar o provider)',
+    summary:
+      'Listar instâncias do Hub (somente banco, sem consultar o provider)',
   })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
-  @ApiResponse({ status: 200, description: 'Lista de instâncias cadastradas no Hub' })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista de instâncias cadastradas no Hub',
+  })
   @ApiResponse({ status: 404, description: 'Produto não encontrado' })
   listHubInstances(@Param('productId') productId: string) {
     return this.service.listHubInstances(productId);
@@ -70,12 +78,16 @@ export class AdminInstancesController {
 
   @Get('hub/:instanceId')
   @ApiOperation({
-    summary: 'Buscar instância do Hub por ID (somente banco, sem consultar o provider)',
+    summary:
+      'Buscar instância do Hub por ID (somente banco, sem consultar o provider)',
   })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiResponse({ status: 200, description: 'Dados da instância no Hub' })
-  @ApiResponse({ status: 404, description: 'Produto ou instância não encontrado' })
+  @ApiResponse({
+    status: 404,
+    description: 'Produto ou instância não encontrado',
+  })
   getHubInstance(
     @Param('productId') productId: string,
     @Param('instanceId') instanceId: string,
@@ -219,5 +231,47 @@ export class AdminInstancesController {
     @Body() dto: SendPresenceDto,
   ) {
     return this.service.sendPresence(productId, instanceId, dto);
+  }
+
+  @Post('import')
+  @ApiOperation({
+    summary: 'Importar instância existente da Evolution para o Hub',
+    description:
+      'Cria o registro da instância apenas no Hub, vinculando-a a uma instância já existente na Evolution. ' +
+      'Idempotente: se a instância já estiver vinculada (mesmo providerInstanceId), retorna "skipped" sem erro.',
+  })
+  @ApiParam({ name: 'productId', description: 'UUID do produto' })
+  @ApiBody({ type: ImportEvolutionInstanceDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Instância importada (created ou skipped)',
+  })
+  @ApiResponse({ status: 400, description: 'Produto inativo ou sem VPS' })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  importSingle(
+    @Param('productId') productId: string,
+    @Body() dto: ImportEvolutionInstanceDto,
+  ) {
+    return this.service.importSingleInstance(productId, dto);
+  }
+
+  @Post('import/bulk')
+  @ApiOperation({
+    summary: 'Importar em lote todas as instâncias da Evolution para o Hub',
+    description:
+      'Busca todas as instâncias cadastradas na Evolution do produto informado (paginação automática) ' +
+      'e cria os registros no Hub para aquelas ainda não vinculadas. ' +
+      'Instâncias já vinculadas (mesmo providerInstanceId) são puladas sem erro.',
+  })
+  @ApiParam({ name: 'productId', description: 'UUID do produto' })
+  @ApiResponse({
+    status: 201,
+    type: ImportBulkResultDto,
+    description: 'Resumo da importação',
+  })
+  @ApiResponse({ status: 400, description: 'Produto inativo ou sem VPS' })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  importBulk(@Param('productId') productId: string) {
+    return this.service.importBulkInstances(productId);
   }
 }

@@ -21,6 +21,7 @@ export interface InstanceCreatedDto {
 
 export interface InstanceDto {
   instanceName: string;
+  id?: string;
   instanceId?: string;
   status: string;
   owner?: string;
@@ -229,34 +230,105 @@ export interface ProxyDto {
 // --- Main interface ---
 
 export interface WhatsAppProvider {
-  createInstance(ctx: ProviderContext, dto: CreateInstanceDto): Promise<InstanceCreatedDto>;
+  createInstance(
+    ctx: ProviderContext,
+    dto: CreateInstanceDto,
+  ): Promise<InstanceCreatedDto>;
   fetchInstances(ctx: ProviderContext): Promise<InstanceDto[]>;
-  fetchInstance(ctx: ProviderContext, instanceName: string): Promise<InstanceDto>;
-  connectInstance(ctx: ProviderContext, instanceName: string): Promise<ConnectInstanceDto>;
-  getConnectionState(ctx: ProviderContext, instanceName: string): Promise<ConnectionStateDto>;
+  fetchInstance(
+    ctx: ProviderContext,
+    instanceName: string,
+  ): Promise<InstanceDto>;
+  connectInstance(
+    ctx: ProviderContext,
+    instanceName: string,
+  ): Promise<ConnectInstanceDto>;
+  getConnectionState(
+    ctx: ProviderContext,
+    instanceName: string,
+  ): Promise<ConnectionStateDto>;
   restartInstance(ctx: ProviderContext, instanceName: string): Promise<void>;
   logoutInstance(ctx: ProviderContext, instanceName: string): Promise<void>;
   deleteInstance(ctx: ProviderContext, instanceName: string): Promise<void>;
 
-  sendText(ctx: ProviderContext, instanceName: string, dto: SendTextDto): Promise<MessageResponseDto>;
-  sendMedia(ctx: ProviderContext, instanceName: string, dto: SendMediaDto): Promise<MessageResponseDto>;
-  sendDocument(ctx: ProviderContext, instanceName: string, dto: SendDocumentDto): Promise<MessageResponseDto>;
-  sendSticker(ctx: ProviderContext, instanceName: string, dto: SendStickerDto): Promise<MessageResponseDto>;
-  sendList(ctx: ProviderContext, instanceName: string, dto: SendListDto): Promise<MessageResponseDto>;
-  sendPresence(ctx: ProviderContext, instanceName: string, dto: SendPresenceDto): Promise<void>;
+  sendText(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SendTextDto,
+  ): Promise<MessageResponseDto>;
+  sendMedia(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SendMediaDto,
+  ): Promise<MessageResponseDto>;
+  sendDocument(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SendDocumentDto,
+  ): Promise<MessageResponseDto>;
+  sendSticker(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SendStickerDto,
+  ): Promise<MessageResponseDto>;
+  sendList(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SendListDto,
+  ): Promise<MessageResponseDto>;
+  sendPresence(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SendPresenceDto,
+  ): Promise<void>;
 
-  findChats(ctx: ProviderContext, instanceName: string, dto: FindChatsDto): Promise<ChatDto[]>;
-  findMessages(ctx: ProviderContext, instanceName: string, dto: FindMessagesDto): Promise<MessageDto[]>;
-  findContacts(ctx: ProviderContext, instanceName: string, dto: FindContactsDto): Promise<ContactDto[]>;
-  checkNumber(ctx: ProviderContext, instanceName: string, dto: CheckNumberDto): Promise<CheckNumberResponseDto>;
+  findChats(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: FindChatsDto,
+  ): Promise<ChatDto[]>;
+  findMessages(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: FindMessagesDto,
+  ): Promise<MessageDto[]>;
+  findContacts(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: FindContactsDto,
+  ): Promise<ContactDto[]>;
+  checkNumber(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: CheckNumberDto,
+  ): Promise<CheckNumberResponseDto>;
 
-  setWebhook(ctx: ProviderContext, instanceName: string, dto: SetWebhookDto): Promise<void>;
+  setWebhook(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SetWebhookDto,
+  ): Promise<void>;
   findWebhook(ctx: ProviderContext, instanceName: string): Promise<WebhookDto>;
-  toggleWebhook(ctx: ProviderContext, instanceName: string, dto: ToggleWebhookDto): Promise<void>;
+  toggleWebhook(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: ToggleWebhookDto,
+  ): Promise<void>;
 
-  setSettings(ctx: ProviderContext, instanceName: string, dto: SetSettingsDto): Promise<SettingsDto>;
-  findSettings(ctx: ProviderContext, instanceName: string): Promise<SettingsDto>;
+  setSettings(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SetSettingsDto,
+  ): Promise<SettingsDto>;
+  findSettings(
+    ctx: ProviderContext,
+    instanceName: string,
+  ): Promise<SettingsDto>;
 
-  setProxy(ctx: ProviderContext, instanceName: string, dto: SetProxyDto): Promise<ProxyDto>;
+  setProxy(
+    ctx: ProviderContext,
+    instanceName: string,
+    dto: SetProxyDto,
+  ): Promise<ProxyDto>;
   findProxy(ctx: ProviderContext, instanceName: string): Promise<ProxyDto>;
 }

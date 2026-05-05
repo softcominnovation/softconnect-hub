@@ -4,6 +4,6 @@ import { EvolutionHttpService } from './evolution.http';
 
 @Module({
   providers: [EvolutionHttpService, EvolutionAdapter],
-  exports: [EvolutionAdapter],
+  exports: [EvolutionAdapter, EvolutionHttpService],
 })
 export class EvolutionModule {}
