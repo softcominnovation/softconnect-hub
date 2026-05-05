@@ -1,16 +1,19 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Worker } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 import { CacheService } from '../../cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
 import type { ProviderContext } from '../../providers/whatsapp-provider.interface';
 import type { BatchJobPayload } from './batch.producer';
+import type { BatchWebhookJobPayload } from './batch-webhook.worker';
+import { BATCH_WEBHOOK_QUEUE } from './queue.constants';
 
 @Injectable()
 export class BatchWorker implements OnModuleInit, OnModuleDestroy {
@@ -22,6 +25,7 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
     private readonly adapterResolver: AdapterResolverService,
+    @Inject(BATCH_WEBHOOK_QUEUE) private readonly batchWebhookQueue: Queue,
   ) {}
 
   onModuleInit() {
@@ -47,6 +51,10 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
         };
         const adapter = this.adapterResolver.resolve(payload.adapterType);
 
+        let success = true;
+        let deliveryError: string | null = null;
+        const processedAt = new Date().toISOString();
+
         try {
           await adapter.sendText(
             ctx,
@@ -55,12 +63,39 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
           );
           await this.cache.increment(`batch:sent:${payload.batchJobId}`);
         } catch (err) {
+          success = false;
+          deliveryError =
+            err instanceof Error
+              ? err.message || 'Unknown delivery error'
+              : 'Unknown delivery error';
           await this.cache.increment(`batch:failed:${payload.batchJobId}`);
           this.logger.error(
             `Batch job ${payload.batchJobId} failed: ${String(err)}`,
           );
           throw err;
         } finally {
+          if (payload.batchWebhookEnabled && payload.batchWebhookUrl) {
+            await this.batchWebhookQueue.add(
+              'notify',
+              {
+                batchWebhookUrl: payload.batchWebhookUrl,
+                apiKeyHash: payload.apiKeyHash,
+                batchJobId: payload.batchJobId,
+                productId: payload.productId,
+                instanceId: payload.instanceId,
+                success,
+                processedAt,
+                deliveryError,
+                messagePayload: payload.message as Record<string, unknown>,
+              } satisfies BatchWebhookJobPayload,
+              {
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1000 },
+                removeOnComplete: { count: 100 },
+                removeOnFail: false,
+              },
+            );
+          }
           await this.finalizeBatchIfDone(payload.batchJobId);
         }
       },

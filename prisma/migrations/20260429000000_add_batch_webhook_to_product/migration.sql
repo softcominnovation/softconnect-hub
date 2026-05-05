@@ -1,0 +1,3 @@
+ALTER TABLE "Product"
+  ADD COLUMN IF NOT EXISTS "batchWebhookEnabled" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "batchWebhookUrl" TEXT;

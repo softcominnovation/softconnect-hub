@@ -46,6 +46,19 @@ export class ProductsController {
     return this.productsService.findAll();
   }
 
+  @Get(':id')
+  @ApiOperation({ summary: 'Busca um produto por ID' })
+  @ApiParam({
+    name: 'id',
+    description: 'UUID do produto',
+    example: 'uuid-do-produto',
+  })
+  @ApiResponse({ status: 200, description: 'Produto encontrado' })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  findOne(@Param('id') id: string) {
+    return this.productsService.findOne(id);
+  }
+
   @Put(':id')
   @ApiOperation({ summary: 'Atualiza um produto' })
   @ApiParam({

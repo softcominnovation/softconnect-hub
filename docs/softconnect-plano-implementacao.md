@@ -27,9 +27,9 @@
 | **Passo 0** — Pipeline CI/CD | ✅ **100% Concluído** |
 | **Passo 1** — Fundações da Infraestrutura | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 2** — Admin Plane & Segurança | ✅ **100% Concluído — Gate de validação aprovado** |
-| **Passo 2.5** — Dashboard Auth & Usuários Admin | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 2.5** — Dashboard Auth & Usuários Admin | ⏳ **Implementado — Aguardando gate de validação** |
 | **Passo 3** — Dynamic Adapters & Adapter Registry | ✅ **100% Concluído — Gate de validação aprovado** |
-| **Passo 4** — Implementação do EvolutionAdapter | ✅ **100% Concluído — Gate de validação aprovado** |
+| **Passo 4** — Implementação do EvolutionAdapter | ⏳ **Implementado — Aguardando gate de validação** |
 | **Swagger (incremental)** — Admin API + tipagem completa | ✅ **Implementado — rotas admin com schemas, params e query docs** |
 | **Global prefix `/api/v1`** — todas as rotas da API | ✅ **Implementado — `app.setGlobalPrefix('api/v1')` em `main.ts`** |
 | **Passo 5** — Controllers do Data Plane | ✅ **100% Concluído — Gate de validação aprovado** |
@@ -37,7 +37,10 @@
 | **Passo 5.6** — Migração para ID-Based Routing no Data Plane | ✅ **Implementado — aguardando gate de validação** |
 | **Passo 6** — Filas Assíncronas & Envio em Lote (BullMQ) | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 6.5** — Reorganização de Módulos (`src/modules/`) | ✅ **Implementado — build limpo, 98/98 testes — Aguardando gate de validação** |
+| **Migration consolidada** — `20260428000000_consolidated_schema` | ✅ **Implementado — migration única consolidada com IF NOT EXISTS** |
+| **Import Evolution → Hub** — endpoints de migração de instâncias | ✅ **Implementado — `POST .../import` e `POST .../import/bulk`** |
 | Passos 7 em diante | 🔒 Bloqueados até aprovação do Passo 6.5 |
+| **Passo 7.5** — Batch Webhook Notification | ✅ **Implementado — 118/118 testes — Aguardando gate de validação** |
 
 ---
 
@@ -602,9 +605,81 @@ Imports de dentro de `src/common/` para outros módulos **não mudam** — `comm
 
 ### ✅ Validação do Desenvolvedor — Passo 7
 
-- [ ] Simular VPS fora do ar e confirmar que o health check marca como `isHealthy: false` após 3 tentativas
-- [ ] Confirmar que o circuit breaker e o CRON de health check atuam de forma complementar (breaker em segundos, CRON em minutos)
+- [x] Simular VPS fora do ar e confirmar que o health check marca como `isHealthy: false` após 3 tentativas
+- [x] Confirmar que o circuit breaker e o CRON de health check atuam de forma complementar (breaker em segundos, CRON em minutos)
 - [ ] Testar o endpoint `GET /admin/health` e verificar que reflete o estado real das VPS
+
+---
+
+## Passo 7.5: Batch Webhook Notification
+
+*Objetivo: Notificar o produto via webhook HMAC-assinado a cada mensagem processada no lote, informando se aquela mensagem específica teve sucesso ou falha.*
+
+**Contrato:** Um evento `batch.message.result` é disparado imediatamente após o processamento de **cada mensagem individual** — não ao final do lote. O receptor pode agregar os eventos usando `batchJobId` se quiser monitorar o lote completo.
+
+### 7.5.1 — Schema e Migração
+
+- [x] Adicionar `batchWebhookEnabled Boolean @default(false)` ao modelo `Product` em `prisma/schema.prisma`
+- [x] Adicionar `batchWebhookUrl String?` ao modelo `Product` em `prisma/schema.prisma`
+- [x] Criar migration `20260429000000_add_batch_webhook_to_product` com `ADD COLUMN IF NOT EXISTS` (sem apagar dados)
+
+### 7.5.2 — Propagação no Auth e Admin
+
+- [x] Estender `AuthCachePayload` com `batchWebhookEnabled: boolean`, `batchWebhookUrl: string | null` e `apiKeyHash: string`
+- [x] Atualizar `ApiKeyGuard` — selecionar e cachear os novos campos; armazenar `hash` como `apiKeyHash` no payload
+- [x] Adicionar campos aos DTOs `CreateProductDto` e `UpdateProductDto`
+- [x] Adicionar validação em `ProductsService`: se `batchWebhookEnabled=true` e `batchWebhookUrl` ausente → `BadRequestException`
+
+### 7.5.3 — Propagação no Produtor de Lotes
+
+- [x] Estender `BatchJobPayload` com `batchWebhookEnabled`, `batchWebhookUrl`, `apiKeyHash` e `instanceId`
+- [x] Atualizar assinatura de `BatchProducer.addJobs()` com os novos parâmetros
+- [x] Propagar `product.apiKeyHash`, `resolved.instanceId`, `product.batchWebhookEnabled` e `product.batchWebhookUrl` em `MessageService.sendBatch()`, `sendBatchMedia()` e `sendBatchDocument()`
+
+### 7.5.4 — Fila e Worker de Webhook
+
+- [x] Adicionar constante `BATCH_WEBHOOK_QUEUE = 'BATCH_WEBHOOK_QUEUE'` em `queue.constants.ts`
+- [x] Criar `BatchWebhookWorker` em `src/modules/queue/batch-webhook.worker.ts`:
+  - Escuta a fila `batch-webhook`
+  - Assina o body com HMAC-SHA256 usando `apiKeyHash` (chave por produto) → header `X-Hub-Signature: sha256=<hex>`
+  - Envia header adicional `X-Hub-Event: batch.message.result`
+  - Body: `{ event, batchJobId, productId, instanceId, success, processedAt, deliveryError, payload: messagePayload }`
+  - Faz `axios.post` com timeout de 10s para `batchWebhookUrl`
+  - Falhas relançam o erro (BullMQ realiza até 3 tentativas com backoff exponencial de 1s, `removeOnFail: false`)
+- [x] Atualizar `BatchWorker` — enfileirar webhook **por mensagem** no bloco `finally` (após cada `sendText`):
+  - `success: true` em caso de êxito, `success: false` + `deliveryError` em caso de falha
+  - `finalizeBatchIfDone()` simplificado — não recebe mais parâmetros de webhook, apenas atualiza Postgres
+- [x] Registrar `BATCH_WEBHOOK_QUEUE` e `BatchWebhookWorker` em `QueueModule`
+
+**Payload entregue ao receptor:**
+```json
+{
+  "event": "batch.message.result",
+  "batchJobId": "uuid-do-lote",
+  "productId": "uuid-do-produto",
+  "instanceId": "uuid-da-instancia",
+  "success": true,
+  "processedAt": "2026-04-29T14:32:01.123Z",
+  "deliveryError": null,
+  "payload": { "number": "5511999990001", "text": "Olá, João!" }
+}
+```
+
+### 7.5.5 — Testes
+
+- [x] `batch-webhook.worker.spec.ts` — 5 casos: entrega POST com payload correto, assinatura HMAC com `apiKeyHash`, header `X-Hub-Event`, falha relança erro, handler de erro registrado
+- [x] `batch.worker.spec.ts` — 7 casos: sent/failed incrementado, Postgres atualizado ao final, webhook enqueued com `success=true`, webhook enqueued com `success=false` + `deliveryError`, webhook não enqueued quando `enabled=false`
+- [x] `batch.producer.spec.ts` — 7 casos: inclui `apiKeyHash` e `instanceId` no payload de cada job
+- [x] `apikey.guard.spec.ts` — campos `batchWebhookEnabled`, `batchWebhookUrl` e `apiKeyHash` no payload cacheado
+- [x] Total: **118/118 testes passando**
+
+### ✅ Validação do Desenvolvedor — Passo 7.5
+
+- [ ] Criar produto com `batchWebhookEnabled: true` e `batchWebhookUrl` válida via `POST /api/v1/admin/products`
+- [ ] Confirmar que criar produto com `batchWebhookEnabled: true` sem `batchWebhookUrl` retorna `400 Bad Request`
+- [ ] Disparar um lote via `POST /api/v1/message/sendText/{instanceId}/batch` e confirmar que o webhook é chamado **uma vez por mensagem** (não uma vez ao final do lote)
+- [ ] Confirmar que cada chamada de webhook carrega `X-Hub-Signature`, `X-Hub-Event: batch.message.result` e o payload com `success`, `processedAt` e `payload` (mensagem original)
+- [ ] Verificar assinatura HMAC no receptor: `sha256=HMAC-SHA256(apiKeyHash, JSON.stringify(body))`
 
 > **🔒 O Passo 8 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
 

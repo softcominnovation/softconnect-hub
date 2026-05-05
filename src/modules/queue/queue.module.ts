@@ -6,12 +6,17 @@ import { CacheModule } from '../../cache/cache.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { ProviderModule } from '../../providers/provider.module';
 import { BatchProducer } from './batch.producer';
+import { BatchWebhookWorker } from './batch-webhook.worker';
 import { BatchWorker } from './batch.worker';
 import { InternalWebhookController } from './internal-webhook.controller';
 import { RelayWorker } from './relay.worker';
-import { BATCH_QUEUE, RELAY_QUEUE } from './queue.constants';
+import {
+  BATCH_QUEUE,
+  BATCH_WEBHOOK_QUEUE,
+  RELAY_QUEUE,
+} from './queue.constants';
 
-export { BATCH_QUEUE, RELAY_QUEUE };
+export { BATCH_QUEUE, BATCH_WEBHOOK_QUEUE, RELAY_QUEUE };
 
 function parseRedisConnection(config: ConfigService): {
   host: string;
@@ -48,8 +53,17 @@ function parseRedisConnection(config: ConfigService): {
         new Queue('relay', { connection: parseRedisConnection(config) }),
       inject: [ConfigService],
     },
+    {
+      provide: BATCH_WEBHOOK_QUEUE,
+      useFactory: (config: ConfigService) =>
+        new Queue('batch-webhook', {
+          connection: parseRedisConnection(config),
+        }),
+      inject: [ConfigService],
+    },
     BatchProducer,
     BatchWorker,
+    BatchWebhookWorker,
     RelayWorker,
   ],
   exports: [BatchProducer],

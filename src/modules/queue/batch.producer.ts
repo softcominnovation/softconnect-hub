@@ -6,11 +6,15 @@ import { BATCH_QUEUE } from './queue.constants';
 export interface BatchJobPayload {
   batchJobId: string;
   productId: string;
+  apiKeyHash: string;
+  instanceId: string;
   adapterType: string;
   instanceName: string;
   providerUrl: string;
   providerApiKey: string;
   message: unknown;
+  batchWebhookEnabled: boolean;
+  batchWebhookUrl: string | null;
 }
 
 @Injectable()
@@ -23,12 +27,16 @@ export class BatchProducer implements OnModuleDestroy {
   async addJobs(
     batchJobId: string,
     productId: string,
+    apiKeyHash: string,
+    instanceId: string,
     adapterType: string,
     instanceName: string,
     providerUrl: string,
     providerApiKey: string,
     messages: unknown[],
     delayMs?: number,
+    batchWebhookEnabled = false,
+    batchWebhookUrl: string | null = null,
   ): Promise<void> {
     await this.cache.setWithTTL(
       `batch:total:${batchJobId}`,
@@ -41,11 +49,15 @@ export class BatchProducer implements OnModuleDestroy {
       data: {
         batchJobId,
         productId,
+        apiKeyHash,
+        instanceId,
         adapterType,
         instanceName,
         providerUrl,
         providerApiKey,
         message,
+        batchWebhookEnabled,
+        batchWebhookUrl,
       } satisfies BatchJobPayload,
       opts: {
         delay: delayMs ? index * delayMs : undefined,

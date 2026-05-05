@@ -14,7 +14,11 @@ import type {
 } from '../../providers/whatsapp-provider.interface';
 import { BatchProducer } from '../queue/batch.producer';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
-import type { SendBatchDocumentDto, SendBatchDto, SendBatchMediaDto } from './dto/message.dto';
+import type {
+  SendBatchDocumentDto,
+  SendBatchDto,
+  SendBatchMediaDto,
+} from './dto/message.dto';
 
 export interface BatchStatusDto {
   id: string;
@@ -38,7 +42,11 @@ export class MessageService {
   private async ctx(
     product: AuthCachePayload,
     instanceId: string,
-  ): Promise<{ ctx: ProviderContext; adapterType: string; instanceName: string }> {
+  ): Promise<{
+    ctx: ProviderContext;
+    adapterType: string;
+    instanceName: string;
+  }> {
     const resolved = await this.instanceResolver.resolveById(
       product.productId,
       instanceId,
@@ -58,7 +66,10 @@ export class MessageService {
     instanceId: string,
     dto: SendTextDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
+    const { ctx, adapterType, instanceName } = await this.ctx(
+      product,
+      instanceId,
+    );
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendText(ctx, instanceName, dto);
   }
@@ -68,7 +79,10 @@ export class MessageService {
     instanceId: string,
     dto: SendMediaDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
+    const { ctx, adapterType, instanceName } = await this.ctx(
+      product,
+      instanceId,
+    );
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendMedia(ctx, instanceName, dto);
   }
@@ -78,7 +92,10 @@ export class MessageService {
     instanceId: string,
     dto: SendListDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
+    const { ctx, adapterType, instanceName } = await this.ctx(
+      product,
+      instanceId,
+    );
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendList(ctx, instanceName, dto);
   }
@@ -88,7 +105,10 @@ export class MessageService {
     instanceId: string,
     dto: SendDocumentDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
+    const { ctx, adapterType, instanceName } = await this.ctx(
+      product,
+      instanceId,
+    );
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendDocument(ctx, instanceName, dto);
   }
@@ -98,7 +118,10 @@ export class MessageService {
     instanceId: string,
     dto: SendStickerDto,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
+    const { ctx, adapterType, instanceName } = await this.ctx(
+      product,
+      instanceId,
+    );
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendSticker(ctx, instanceName, dto);
   }
@@ -108,7 +131,10 @@ export class MessageService {
     instanceId: string,
     dto: SendPresenceDto,
   ): Promise<void> {
-    const { ctx, adapterType, instanceName } = await this.ctx(product, instanceId);
+    const { ctx, adapterType, instanceName } = await this.ctx(
+      product,
+      instanceId,
+    );
     const adapter = this.adapterResolver.resolve(adapterType);
     return adapter.sendPresence(ctx, instanceName, dto);
   }
@@ -118,7 +144,10 @@ export class MessageService {
     instanceId: string,
     dto: SendBatchMediaDto,
   ): Promise<{ batchJobId: string }> {
-    const resolved = await this.instanceResolver.resolveById(product.productId, instanceId);
+    const resolved = await this.instanceResolver.resolveById(
+      product.productId,
+      instanceId,
+    );
     const batchJob = await this.prisma.batchJob.create({
       data: {
         productId: product.productId,
@@ -130,12 +159,16 @@ export class MessageService {
     await this.batchProducer.addJobs(
       batchJob.id,
       product.productId,
+      product.apiKeyHash,
+      resolved.instanceId,
       resolved.adapterType,
       resolved.instanceName,
       resolved.providerUrl,
       resolved.providerApiKey,
       dto.messages,
       dto.delayMs,
+      product.batchWebhookEnabled,
+      product.batchWebhookUrl,
     );
     return { batchJobId: batchJob.id };
   }
@@ -145,7 +178,10 @@ export class MessageService {
     instanceId: string,
     dto: SendBatchDocumentDto,
   ): Promise<{ batchJobId: string }> {
-    const resolved = await this.instanceResolver.resolveById(product.productId, instanceId);
+    const resolved = await this.instanceResolver.resolveById(
+      product.productId,
+      instanceId,
+    );
     const batchJob = await this.prisma.batchJob.create({
       data: {
         productId: product.productId,
@@ -157,17 +193,24 @@ export class MessageService {
     await this.batchProducer.addJobs(
       batchJob.id,
       product.productId,
+      product.apiKeyHash,
+      resolved.instanceId,
       resolved.adapterType,
       resolved.instanceName,
       resolved.providerUrl,
       resolved.providerApiKey,
       dto.messages,
       dto.delayMs,
+      product.batchWebhookEnabled,
+      product.batchWebhookUrl,
     );
     return { batchJobId: batchJob.id };
   }
 
-  async deleteBatch(product: AuthCachePayload, batchJobId: string): Promise<void> {
+  async deleteBatch(
+    product: AuthCachePayload,
+    batchJobId: string,
+  ): Promise<void> {
     const job = await this.prisma.batchJob.findFirst({
       where: { id: batchJobId, productId: product.productId },
     });
@@ -199,12 +242,16 @@ export class MessageService {
     await this.batchProducer.addJobs(
       batchJob.id,
       product.productId,
+      product.apiKeyHash,
+      resolved.instanceId,
       resolved.adapterType,
       resolved.instanceName,
       resolved.providerUrl,
       resolved.providerApiKey,
       dto.messages,
       dto.delayMs,
+      product.batchWebhookEnabled,
+      product.batchWebhookUrl,
     );
 
     return { batchJobId: batchJob.id };

@@ -14,6 +14,8 @@ const PAYLOAD: AuthCachePayload = {
   hubRelay: false,
   adapterType: 'evolution',
   vpsId: 'vps-1',
+  batchWebhookEnabled: false,
+  batchWebhookUrl: null,
 };
 
 function makeContext(apikey?: string): ExecutionContext {
@@ -64,6 +66,8 @@ describe('ApiKeyGuard', () => {
       hubRelay: false,
       adapterType: 'evolution',
       vpsId: 'vps-1',
+      batchWebhookEnabled: false,
+      batchWebhookUrl: null,
     });
 
     const ctx = makeContext(RAW_KEY);

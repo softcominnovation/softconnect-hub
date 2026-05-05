@@ -47,11 +47,14 @@ export class AdminInstancesService {
       where: { id: productId },
       select: {
         id: true,
+        apiKeyHash: true,
         isActive: true,
         origins: true,
         hubRelay: true,
         adapterType: true,
         vpsId: true,
+        batchWebhookEnabled: true,
+        batchWebhookUrl: true,
       },
     });
 
@@ -61,11 +64,14 @@ export class AdminInstancesService {
 
     return {
       productId: product.id,
+      apiKeyHash: product.apiKeyHash,
       isActive: product.isActive,
       origins: product.origins,
       hubRelay: product.hubRelay,
       adapterType: product.adapterType,
       vpsId: product.vpsId,
+      batchWebhookEnabled: product.batchWebhookEnabled,
+      batchWebhookUrl: product.batchWebhookUrl,
     };
   }
 

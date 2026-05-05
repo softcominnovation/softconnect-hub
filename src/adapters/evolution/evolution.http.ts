@@ -33,10 +33,16 @@ export class EvolutionHttpService {
     });
     this.resetMs = this.config.get('CIRCUIT_BREAKER_RESET_MS', { infer: true });
 
+    const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
+    const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
+
+    httpAgent.setMaxListeners(0);
+    httpsAgent.setMaxListeners(0);
+
     this.client = axios.create({
       timeout: timeoutMs,
-      httpAgent: new http.Agent({ keepAlive: true }),
-      httpsAgent: new https.Agent({ keepAlive: true }),
+      httpAgent,
+      httpsAgent,
     });
   }
 
@@ -102,7 +108,9 @@ export class EvolutionHttpService {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const fullUrl = `${vpsUrl}${path}`;
-        this.logger.log(`[evo:request] ${method.toUpperCase()} ${fullUrl}${data !== undefined ? ` body=${JSON.stringify(data)}` : ''}`);
+        this.logger.log(
+          `[evo:request] ${method.toUpperCase()} ${fullUrl}${data !== undefined ? ` body=${JSON.stringify(data)}` : ''}`,
+        );
         const response = await this.client.request<T>({
           method,
           url: `${vpsUrl}${path}`,

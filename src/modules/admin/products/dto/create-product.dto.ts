@@ -35,4 +35,18 @@ export class CreateProductDto {
     required: false,
   })
   vpsId?: string;
+
+  @ApiProperty({
+    description: 'Ativa notificação de resultado batch via webhook',
+    example: false,
+    required: false,
+  })
+  batchWebhookEnabled?: boolean;
+
+  @ApiProperty({
+    description: 'URL de destino das notificações de batch webhook',
+    example: 'https://n8n.empresa.com/webhook/batch-result',
+    required: false,
+  })
+  batchWebhookUrl?: string;
 }

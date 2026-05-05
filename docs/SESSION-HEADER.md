@@ -8,7 +8,7 @@
 ## Contexto da Sessão ou fase
 
 **Projeto:** SoftConnect 2.0
-**Etapa atual:** Passo 7.5 — System Monitor Integration (implementado — 105/105 testes)
+**Etapa atual:** Passo 7.5 - Batch Webhook Notification (implementado — 105/105 testes)
 **Objetivo desta sessão:** Passo 7.5 implementado. Integração opcional com agente system-monitor nas VPS (`monitorUrl`, `monitorApiKey` opcionais no modelo `VpsServer`). `HealthCheckService.collectMetrics()` coleta métricas fire-and-forget após cada check e escreve no Redis `vps:metrics:{vpsId}` com TTL 90s. `GET /admin/health` agora inclui `systemMetrics` quando disponível. Novo endpoint `GET /admin/health/hub/metrics` para métricas do hub (controlado por `HUB_MONITOR_URL` e `HUB_MONITOR_API_KEY` opcionais). Schema migrado: `add_monitor_fields_to_vps`. Ausência de configuração é totalmente transparente. 105/105 testes passando.
 
 ---

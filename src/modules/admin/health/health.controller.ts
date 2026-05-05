@@ -43,9 +43,9 @@ export class HealthController {
 
     try {
       const response = await axios.get<Record<string, unknown>>(
-        monitorUrl + '/',
+        monitorUrl + '/status',
         {
-          headers: apiKey ? { apikey: apiKey } : {},
+          headers: apiKey ? { 'x-api-key': apiKey } : {},
           timeout: 5000,
         },
       );

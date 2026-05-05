@@ -9,11 +9,15 @@ type FakeJob = {
   data: {
     batchJobId: string;
     productId: string;
+    apiKeyHash: string;
+    instanceId: string;
     adapterType: string;
     instanceName: string;
     providerUrl: string;
     providerApiKey: string;
     message: SendTextDto;
+    batchWebhookEnabled: boolean;
+    batchWebhookUrl: string | null;
   };
   opts: { delay?: number; attempts: number };
 };
@@ -25,6 +29,8 @@ describe('BatchProducer', () => {
 
   const batchJobId = 'batch-001';
   const productId = 'prod-001';
+  const apiKeyHash = 'hash-abc123';
+  const instanceId = 'inst-001';
   const adapterType = 'evolution';
   const instanceName = 'my-instance';
   const providerUrl = 'http://evolution.local:8080';
@@ -40,6 +46,8 @@ describe('BatchProducer', () => {
     await producer.addJobs(
       batchJobId,
       productId,
+      apiKeyHash,
+      instanceId,
       adapterType,
       instanceName,
       providerUrl,
@@ -95,6 +103,16 @@ describe('BatchProducer', () => {
     });
   });
 
+  it('deve propagar apiKeyHash e instanceId em cada job', async () => {
+    await addAll();
+
+    const jobs = getCapturedJobs();
+    jobs.forEach((job) => {
+      expect(job.data.apiKeyHash).toBe(apiKeyHash);
+      expect(job.data.instanceId).toBe(instanceId);
+    });
+  });
+
   it('deve aplicar delay incremental quando delayMs for informado', async () => {
     await addAll(500);
 
@@ -109,5 +127,40 @@ describe('BatchProducer', () => {
 
     const jobs = getCapturedJobs();
     jobs.forEach((job) => expect(job.opts.attempts).toBe(1));
+  });
+
+  it('deve incluir batchWebhookEnabled e batchWebhookUrl no payload de cada job', async () => {
+    await producer.addJobs(
+      batchJobId,
+      productId,
+      apiKeyHash,
+      instanceId,
+      adapterType,
+      instanceName,
+      providerUrl,
+      providerApiKey,
+      messages,
+      undefined,
+      true,
+      'https://cliente.example.com/callback',
+    );
+
+    const jobs = getCapturedJobs();
+    jobs.forEach((job) => {
+      expect(job.data.batchWebhookEnabled).toBe(true);
+      expect(job.data.batchWebhookUrl).toBe(
+        'https://cliente.example.com/callback',
+      );
+    });
+  });
+
+  it('deve usar batchWebhookEnabled=false e batchWebhookUrl=null por padrão', async () => {
+    await addAll();
+
+    const jobs = getCapturedJobs();
+    jobs.forEach((job) => {
+      expect(job.data.batchWebhookEnabled).toBe(false);
+      expect(job.data.batchWebhookUrl).toBeNull();
+    });
   });
 });

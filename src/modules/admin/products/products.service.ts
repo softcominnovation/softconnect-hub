@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -21,9 +22,19 @@ export class ProductsService {
     private readonly cache: CacheService,
   ) {}
 
+  private validateBatchWebhook(enabled?: boolean, url?: string): void {
+    if (enabled === true && !url) {
+      throw new BadRequestException(
+        'batchWebhookUrl é obrigatório quando batchWebhookEnabled é true',
+      );
+    }
+  }
+
   async create(
     dto: CreateProductDto,
   ): Promise<SafeProduct & { apiKey: string }> {
+    this.validateBatchWebhook(dto.batchWebhookEnabled, dto.batchWebhookUrl);
+
     const apiKey = generateApiKey();
     const apiKeyHash = hashSHA256(apiKey);
 
@@ -37,6 +48,8 @@ export class ProductsService {
           origins: dto.origins ?? [],
           hubRelay: dto.hubRelay ?? false,
           vpsId: dto.vpsId ?? null,
+          batchWebhookEnabled: dto.batchWebhookEnabled ?? false,
+          batchWebhookUrl: dto.batchWebhookUrl ?? null,
         },
       });
 
@@ -69,6 +82,8 @@ export class ProductsService {
         adapterType: true,
         origins: true,
         hubRelay: true,
+        batchWebhookEnabled: true,
+        batchWebhookUrl: true,
         isActive: true,
         vpsId: true,
         createdAt: true,
@@ -77,7 +92,30 @@ export class ProductsService {
     });
   }
 
+  async findOne(id: string): Promise<SafeProduct> {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        adapterType: true,
+        origins: true,
+        hubRelay: true,
+        batchWebhookEnabled: true,
+        batchWebhookUrl: true,
+        isActive: true,
+        vpsId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!product) throw new NotFoundException(`Produto ${id} não encontrado`);
+    return product;
+  }
+
   async update(id: string, dto: UpdateProductDto): Promise<SafeProduct> {
+    this.validateBatchWebhook(dto.batchWebhookEnabled, dto.batchWebhookUrl);
     await this.assertExists(id);
 
     try {

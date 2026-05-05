@@ -192,8 +192,8 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
           used: number;
           percent: number;
         }>;
-      }>(`${vps.monitorUrl}/`, {
-        headers: apiKey ? { apikey: apiKey } : {},
+      }>(`${vps.monitorUrl}/status`, {
+        headers: apiKey ? { 'x-api-key': apiKey } : {},
         timeout: 5000,
       });
 
