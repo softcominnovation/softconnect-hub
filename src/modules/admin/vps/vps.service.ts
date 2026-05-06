@@ -53,6 +53,7 @@ export class VpsService {
           monitorApiKey: dto.monitorApiKey
             ? encryptAES256GCM(dto.monitorApiKey, key)
             : null,
+          notes: dto.notes ?? null,
         },
       });
 

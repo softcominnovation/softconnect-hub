@@ -11,7 +11,11 @@ jest.mock('bullmq', () => {
     .mockImplementation(
       (name: string, processor: (job: unknown) => Promise<unknown>) => {
         processorMap.set(name, processor);
-        return { on: jest.fn(), close: jest.fn(), __processorMap: processorMap };
+        return {
+          on: jest.fn(),
+          close: jest.fn(),
+          __processorMap: processorMap,
+        };
       },
     );
   return { Worker: WorkerMock };
@@ -44,6 +48,7 @@ describe('RelayWorker', () => {
           provide: ConfigService,
           useValue: {
             getOrThrow: jest.fn().mockReturnValue('redis://localhost:6379'),
+            get: jest.fn().mockReturnValue(undefined),
           },
         },
         { provide: PrismaService, useValue: prisma },
@@ -82,8 +87,7 @@ describe('RelayWorker', () => {
       data: { adapterType: 'evolution', instanceName: 'my-instance', body },
     });
 
-    const expectedSig =
-      `sha256=${createHmac('sha256', secret).update(JSON.stringify(body)).digest('hex')}`;
+    const expectedSig = `sha256=${createHmac('sha256', secret).update(JSON.stringify(body)).digest('hex')}`;
     expect(axios.post).toHaveBeenCalledWith(
       'https://produto.example.com/webhook',
       body,
@@ -113,7 +117,11 @@ describe('RelayWorker', () => {
 
     await expect(
       getProcessor()({
-        data: { adapterType: 'evolution', instanceName: 'my-instance', body: {} },
+        data: {
+          adapterType: 'evolution',
+          instanceName: 'my-instance',
+          body: {},
+        },
       }),
     ).resolves.toBeUndefined();
 

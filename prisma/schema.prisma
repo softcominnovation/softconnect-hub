@@ -42,6 +42,7 @@ model VpsServer {
   managerApiKey  String?
   monitorUrl     String?
   monitorApiKey  String?
+  notes          String?
   isHealthy      Boolean   @default(true)
   lastHealthAt   DateTime?
   isActive       Boolean   @default(true)

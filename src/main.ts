@@ -18,6 +18,7 @@ async function bootstrap() {
     .setTitle('SoftConnect 2.0 API')
     .setDescription('API Gateway de mensageria — Admin Plane e Data Plane')
     .setVersion('2.0')
+    .addServer('/api/v1')
     .addBearerAuth()
     .addApiKey({ type: 'apiKey', name: 'apikey', in: 'header' }, 'apikey')
     .addTag(
@@ -46,10 +47,11 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig, {
     deepScanRoutes: true,
     operationIdFactory: (_controllerKey, methodKey) => methodKey,
+    ignoreGlobalPrefix: true,
   });
 
   const adminPaths = Object.keys(document.paths)
-    .filter((path) => path.startsWith('/api/v1/admin'))
+    .filter((path) => path.startsWith('/admin'))
     .reduce<typeof document.paths>((acc, path) => {
       acc[path] = document.paths[path];
       return acc;
@@ -65,12 +67,12 @@ async function bootstrap() {
   const dataplanePaths = Object.keys(document.paths)
     .filter(
       (path) =>
-        path.startsWith('/api/v1/instance') ||
-        path.startsWith('/api/v1/message') ||
-        path.startsWith('/api/v1/chat') ||
-        path.startsWith('/api/v1/webhook') ||
-        path.startsWith('/api/v1/settings') ||
-        path.startsWith('/api/v1/proxy'),
+        path.startsWith('/instance') ||
+        path.startsWith('/message') ||
+        path.startsWith('/chat') ||
+        path.startsWith('/webhook') ||
+        path.startsWith('/settings') ||
+        path.startsWith('/proxy'),
     )
     .reduce<typeof document.paths>((acc, path) => {
       acc[path] = document.paths[path];

@@ -39,6 +39,7 @@
 | **Passo 6.5** — Reorganização de Módulos (`src/modules/`) | ✅ **Implementado — build limpo, 98/98 testes — Aguardando gate de validação** |
 | **Migration consolidada** — `20260428000000_consolidated_schema` | ✅ **Implementado — migration única consolidada com IF NOT EXISTS** |
 | **Import Evolution → Hub** — endpoints de migração de instâncias | ✅ **Implementado — `POST .../import` e `POST .../import/bulk`** |
+| **VPS `notes` field** — campo de anotações livres na VpsServer | ✅ **Implementado — schema, migration, DTOs, service — 118/118 testes** |
 | Passos 7 em diante | 🔒 Bloqueados até aprovação do Passo 6.5 |
 | **Passo 7.5** — Batch Webhook Notification | ✅ **Implementado — 118/118 testes — Aguardando gate de validação** |
 
@@ -605,9 +606,11 @@ Imports de dentro de `src/common/` para outros módulos **não mudam** — `comm
 
 ### ✅ Validação do Desenvolvedor — Passo 7
 
-- [x] Simular VPS fora do ar e confirmar que o health check marca como `isHealthy: false` após 3 tentativas
-- [x] Confirmar que o circuit breaker e o CRON de health check atuam de forma complementar (breaker em segundos, CRON em minutos)
+- [ ] Simular VPS fora do ar e confirmar que o health check marca como `isHealthy: false` após 3 tentativas
+- [ ] Confirmar que o circuit breaker e o CRON de health check atuam de forma complementar (breaker em segundos, CRON em minutos)
 - [ ] Testar o endpoint `GET /admin/health` e verificar que reflete o estado real das VPS
+
+> **🔒 O Passo 8 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
 
 ---
 

@@ -19,6 +19,10 @@ import {
 import { JwtGuard } from '../../../auth/jwt.guard';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import {
+  SetWebhookConfigDto,
+  WebhookConfigResponseDto,
+} from './dto/webhook-config.dto';
 import { ProductsService } from './products.service';
 
 @ApiTags('Admin — Products')
@@ -94,5 +98,37 @@ export class ProductsController {
   @ApiResponse({ status: 404, description: 'Produto não encontrado' })
   rotateKey(@Param('id') id: string) {
     return this.productsService.rotateKey(id);
+  }
+
+  @Put(':id/webhook-config')
+  @ApiOperation({
+    summary:
+      'Cadastra ou atualiza a configuração de relay webhook do produto — URL para onde o Hub entregará os eventos quando hubRelay estiver ativo',
+  })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiBody({ type: SetWebhookConfigDto })
+  @ApiResponse({
+    status: 200,
+    description: 'WebhookConfig salva',
+    type: WebhookConfigResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  setWebhookConfig(@Param('id') id: string, @Body() dto: SetWebhookConfigDto) {
+    return this.productsService.setWebhookConfig(id, dto);
+  }
+
+  @Get(':id/webhook-config')
+  @ApiOperation({
+    summary: 'Consulta a configuração de relay webhook do produto',
+  })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiResponse({
+    status: 200,
+    description: 'WebhookConfig atual ou null',
+    type: WebhookConfigResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  getWebhookConfig(@Param('id') id: string) {
+    return this.productsService.getWebhookConfig(id);
   }
 }

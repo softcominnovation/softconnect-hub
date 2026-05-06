@@ -32,6 +32,11 @@ export const configSchema = z.object({
     .optional()
     .transform((v) => v === 'true')
     .default(false),
+  RELAY_DEBUG: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true')
+    .default(false),
   HUB_MONITOR_URL: z.string().url().optional(),
   HUB_MONITOR_API_KEY: z.string().optional(),
 });

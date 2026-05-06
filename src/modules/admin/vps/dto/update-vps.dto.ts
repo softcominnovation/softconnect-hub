@@ -85,4 +85,11 @@ export class UpdateVpsDto {
     required: false,
   })
   monitorApiKey?: string;
+
+  @ApiProperty({
+    description: 'Anotações livres sobre a VPS (suporta múltiplas linhas)',
+    example: 'VPS principal do cliente X.\nConfigurada em 2026-01.',
+    required: false,
+  })
+  notes?: string;
 }

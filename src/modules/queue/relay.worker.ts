@@ -54,9 +54,18 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async relay(payload: RelayJobPayload): Promise<void> {
+    const debug = this.config.get<boolean>('RELAY_DEBUG');
+    const start = Date.now();
+
+    if (debug) {
+      this.logger.log(
+        `[RELAY] job received | adapterType=${payload.adapterType} | instanceName=${payload.instanceName}`,
+      );
+    }
+
     const instance = await this.prisma.instance.findFirst({
       where: { instanceName: payload.instanceName, isActive: true },
-      select: { productId: true },
+      select: { id: true, productId: true },
     });
 
     if (!instance) {
@@ -64,6 +73,12 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
         `Relay: nenhuma instância encontrada para "${payload.instanceName}"`,
       );
       return;
+    }
+
+    if (debug) {
+      this.logger.log(
+        `[RELAY] instance resolved | instanceId=${instance.id} | productId=${instance.productId}`,
+      );
     }
 
     const webhookConfig = await this.prisma.webhookConfig.findFirst({
@@ -77,18 +92,53 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    if (debug) {
+      this.logger.log(
+        `[RELAY] webhook config found | url=${webhookConfig.url} | events=${JSON.stringify(webhookConfig.events)}`,
+      );
+    }
+
     const bodyStr = JSON.stringify(payload.body);
     const signature = createHmac('sha256', webhookConfig.secret)
       .update(bodyStr)
       .digest('hex');
 
-    await axios.post(webhookConfig.url, payload.body, {
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Hub-Signature': `sha256=${signature}`,
-      },
-      timeout: 10000,
-    });
+    const payloadKeys = Object.keys(
+      typeof payload.body === 'object' && payload.body !== null
+        ? (payload.body as Record<string, unknown>)
+        : {},
+    );
+
+    if (debug) {
+      this.logger.log(
+        `[RELAY] delivering | url=${webhookConfig.url} | payloadKeys=${JSON.stringify(payloadKeys)}`,
+      );
+    }
+
+    try {
+      const response = await axios.post(webhookConfig.url, payload.body, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Hub-Signature': `sha256=${signature}`,
+        },
+        timeout: 10000,
+      });
+
+      if (debug) {
+        this.logger.log(
+          `[RELAY] delivered ✓ | url=${webhookConfig.url} | status=${response.status} | latencyMs=${Date.now() - start}`,
+        );
+      }
+    } catch (err: unknown) {
+      const status = axios.isAxiosError(err)
+        ? (err.response?.status ?? 'no-response')
+        : 'error';
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `[RELAY ERROR] delivery failed | url=${webhookConfig.url} | status=${status} | error=${message}`,
+      );
+      throw err;
+    }
   }
 
   async onModuleDestroy() {

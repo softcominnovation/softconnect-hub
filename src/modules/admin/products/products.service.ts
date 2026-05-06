@@ -5,13 +5,14 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { Product } from '@prisma/client';
+import { Product, WebhookConfig } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { CacheService } from '../../../cache/cache.service';
 import { generateApiKey, hashSHA256 } from '../../../common/crypto.util';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { SetWebhookConfigDto } from './dto/webhook-config.dto';
 
 type SafeProduct = Omit<Product, 'apiKeyHash'>;
 
@@ -184,5 +185,43 @@ export class ProductsService {
       select: { id: true },
     });
     if (!exists) throw new NotFoundException(`Produto ${id} não encontrado`);
+  }
+
+  async setWebhookConfig(
+    productId: string,
+    dto: SetWebhookConfigDto,
+  ): Promise<WebhookConfig> {
+    await this.assertExists(productId);
+
+    const existing = await this.prisma.webhookConfig.findFirst({
+      where: { productId },
+    });
+
+    if (existing) {
+      return this.prisma.webhookConfig.update({
+        where: { id: existing.id },
+        data: {
+          url: dto.url,
+          secret: dto.secret,
+          events: dto.events ?? [],
+          isActive: true,
+        },
+      });
+    }
+
+    return this.prisma.webhookConfig.create({
+      data: {
+        productId,
+        url: dto.url,
+        secret: dto.secret,
+        events: dto.events ?? [],
+        isActive: true,
+      },
+    });
+  }
+
+  async getWebhookConfig(productId: string): Promise<WebhookConfig | null> {
+    await this.assertExists(productId);
+    return this.prisma.webhookConfig.findFirst({ where: { productId } });
   }
 }
