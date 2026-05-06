@@ -7,6 +7,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Worker } from 'bullmq';
 import { createHmac } from 'crypto';
+import * as http from 'http';
+import * as https from 'https';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -20,6 +22,8 @@ export interface RelayJobPayload {
 export class RelayWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RelayWorker.name);
   private worker!: Worker;
+  private readonly httpAgent = new http.Agent({ keepAlive: true });
+  private readonly httpsAgent = new https.Agent({ keepAlive: true });
 
   constructor(
     private readonly config: ConfigService,
@@ -45,7 +49,7 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
         const payload = job.data as RelayJobPayload;
         await this.relay(payload);
       },
-      { connection },
+      { connection, concurrency: 20 },
     );
 
     this.worker.on('error', (err) => {
@@ -121,6 +125,8 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
           'Content-Type': 'application/json',
           'X-Hub-Signature': `sha256=${signature}`,
         },
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
         timeout: 10000,
       });
 
