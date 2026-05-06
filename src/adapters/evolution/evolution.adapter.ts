@@ -318,13 +318,22 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SetWebhookDto,
   ): Promise<void> {
-    await this.http.request(
+    const { byEvents, base64, ...rest } = dto.webhook;
+    const payload = {
+      webhook: {
+        ...rest,
+        byEvents: byEvents ?? false,
+        base64: base64 ?? true,
+      },
+    };
+    const response = await this.http.request<unknown>(
       'post',
       ctx.providerUrl,
       ctx.providerApiKey,
       `/webhook/set/${instanceName}`,
-      dto,
+      payload,
     );
+    void response;
   }
 
   findWebhook(ctx: ProviderContext, instanceName: string): Promise<WebhookDto> {

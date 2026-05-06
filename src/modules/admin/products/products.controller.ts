@@ -21,6 +21,8 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import {
   SetWebhookConfigDto,
+  SyncRelayDto,
+  SyncRelayResultDto,
   WebhookConfigResponseDto,
 } from './dto/webhook-config.dto';
 import { ProductsService } from './products.service';
@@ -130,5 +132,29 @@ export class ProductsController {
   @ApiResponse({ status: 404, description: 'Produto não encontrado' })
   getWebhookConfig(@Param('id') id: string) {
     return this.productsService.getWebhookConfig(id);
+  }
+
+  @Post(':id/sync-relay')
+  @ApiOperation({
+    summary: 'Sincroniza o webhook das instâncias do produto na Evolution',
+    description:
+      'Quando hubRelay=true, registra a URL do Hub em todas as instâncias (ou apenas em uma, se instanceId for informado). ' +
+      'Quando hubRelay=false, desativa o webhook em todas as instâncias afetadas. ' +
+      'Use após ativar/desativar o hubRelay do produto para propagar a mudança imediatamente.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiBody({
+    type: SyncRelayDto,
+    required: false,
+    description: 'Opcional — omita para sincronizar todas as instâncias ativas',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Resultado do sync por instância',
+    type: SyncRelayResultDto,
+  })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  syncRelay(@Param('id') id: string, @Body() dto?: SyncRelayDto) {
+    return this.productsService.syncRelay(id, dto?.instanceId);
   }
 }

@@ -349,7 +349,14 @@ describe('EvolutionAdapter', () => {
         CTX.providerUrl,
         CTX.providerApiKey,
         `/webhook/set/${INSTANCE}`,
-        dto,
+        {
+          webhook: {
+            enabled: true,
+            url: 'https://n8n.softcom.test/webhook/wh',
+            byEvents: false,
+            base64: true,
+          },
+        },
       );
     });
 

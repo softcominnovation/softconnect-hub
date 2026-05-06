@@ -1,28 +1,51 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Product, WebhookConfig } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { CacheService } from '../../../cache/cache.service';
-import { generateApiKey, hashSHA256 } from '../../../common/crypto.util';
+import {
+  decryptAES256GCM,
+  generateApiKey,
+  hashSHA256,
+} from '../../../common/crypto.util';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { AdapterResolverService } from '../../../providers/adapter-resolver.service';
+import { ProviderContext } from '../../../providers/whatsapp-provider.interface';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { SetWebhookConfigDto } from './dto/webhook-config.dto';
+import {
+  SetWebhookConfigDto,
+  SyncRelayResultDto,
+} from './dto/webhook-config.dto';
 
 type SafeProduct = Omit<Product, 'apiKeyHash'>;
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+  private readonly encryptionKeyHex: string;
+  private readonly hubBaseUrl: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
-  ) {}
-
+    private readonly config: ConfigService,
+    private readonly adapterResolver: AdapterResolverService,
+  ) {
+    this.encryptionKeyHex = this.config.getOrThrow<string>('ENCRYPTION_KEY');
+    this.hubBaseUrl = this.config.get<string>(
+      'HUB_BASE_URL',
+      'http://localhost:3000',
+    );
+  }
   private validateBatchWebhook(enabled?: boolean, url?: string): void {
     if (enabled === true && !url) {
       throw new BadRequestException(
@@ -185,6 +208,113 @@ export class ProductsService {
       select: { id: true },
     });
     if (!exists) throw new NotFoundException(`Produto ${id} não encontrado`);
+  }
+
+  async syncRelay(
+    productId: string,
+    instanceId?: string,
+  ): Promise<SyncRelayResultDto> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { hubRelay: true, adapterType: true },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Produto ${productId} não encontrado`);
+    }
+
+    // Se instanceId foi informado, valida existência antes de qualquer operação
+    if (instanceId) {
+      const exists = await this.prisma.instance.findFirst({
+        where: { id: instanceId, productId, isActive: true },
+        select: { id: true },
+      });
+      if (!exists) {
+        throw new NotFoundException(
+          `Instância ${instanceId} não encontrada ou não pertence ao produto`,
+        );
+      }
+    }
+
+    const instances = await this.prisma.instance.findMany({
+      where: instanceId
+        ? { id: instanceId, productId, isActive: true }
+        : { productId, isActive: true },
+      include: { vps: true },
+    });
+
+    if (instances.length === 0) {
+      return {
+        synced: 0,
+        failed: 0,
+        reason: 'Nenhuma instância ativa encontrada',
+      };
+    }
+
+    // Determina a URL alvo: Hub quando relay ativo, URL do cliente quando inativo
+    // Em ambos os casos, os eventos filtrados vêm do webhookConfig do produto
+    const webhookConfig = await this.prisma.webhookConfig.findFirst({
+      where: { productId, isActive: true },
+    });
+
+    let targetUrl: string;
+    if (product.hubRelay) {
+      targetUrl = `${this.hubBaseUrl}/internal/webhook/${product.adapterType}`;
+    } else {
+      if (!webhookConfig) {
+        throw new BadRequestException(
+          'Produto não possui WebhookConfig cadastrado — cadastre a URL do cliente antes de sincronizar com hubRelay=false',
+        );
+      }
+      targetUrl = webhookConfig.url;
+    }
+
+    const targetEvents = webhookConfig?.events ?? [];
+
+    let synced = 0;
+    let failed = 0;
+    const errors: { instanceName: string; error: string }[] = [];
+
+    for (const instance of instances) {
+      try {
+        const ctx: ProviderContext = {
+          providerUrl: instance.vps.providerUrl,
+          providerApiKey: decryptAES256GCM(
+            instance.vps.providerApiKey,
+            this.encryptionKeyHex,
+          ),
+        };
+
+        const adapter = this.adapterResolver.resolve(product.adapterType);
+
+        await adapter.setWebhook(ctx, instance.instanceName, {
+          webhook: {
+            url: targetUrl,
+            enabled: true,
+            events: targetEvents,
+          },
+        });
+
+        synced++;
+      } catch (err) {
+        let errorDetail: string;
+        if (err instanceof HttpException) {
+          errorDetail = JSON.stringify(err.getResponse());
+        } else {
+          errorDetail = err instanceof Error ? err.message : String(err);
+        }
+        this.logger.error(
+          `[SYNC-RELAY] falha na instância ${instance.instanceName}: ${errorDetail}`,
+        );
+        errors.push({
+          instanceName: instance.instanceName,
+          error: errorDetail,
+        });
+        failed++;
+      }
+    }
+
+    return { synced, failed, targetUrl, ...(errors.length > 0 && { errors }) };
   }
 
   async setWebhookConfig(

@@ -43,3 +43,55 @@ export class WebhookConfigResponseDto {
   @ApiProperty()
   createdAt!: Date;
 }
+
+export class SyncRelayResultDto {
+  @ApiProperty({
+    description: 'Número de instâncias atualizadas com sucesso na Evolution',
+    example: 3,
+  })
+  synced!: number;
+
+  @ApiProperty({
+    description: 'Número de instâncias que falharam ao atualizar',
+    example: 0,
+  })
+  failed!: number;
+
+  @ApiProperty({
+    description:
+      'URL registrada na Evolution para todas as instâncias sincronizadas',
+    example: 'https://hub.softconnect.net.br/api/v1/internal/webhook/evolution',
+    required: false,
+  })
+  targetUrl?: string;
+
+  @ApiProperty({
+    description: 'Motivo caso o sync não tenha processado nenhuma instância',
+    required: false,
+  })
+  reason?: string;
+
+  @ApiProperty({
+    description:
+      'Detalhes de erro por instância que falhou — contém o retorno real da Evolution',
+    type: [Object],
+    required: false,
+    example: [
+      {
+        instanceName: 'teste',
+        error: '{"status":400,"error":"Bad Request","message":"..."}',
+      },
+    ],
+  })
+  errors?: { instanceName: string; error: string }[];
+}
+
+export class SyncRelayDto {
+  @ApiProperty({
+    description:
+      'ID da instância a sincronizar. Se omitido, todas as instâncias ativas do produto serão sincronizadas.',
+    example: 'uuid-da-instancia',
+    required: false,
+  })
+  instanceId?: string;
+}
