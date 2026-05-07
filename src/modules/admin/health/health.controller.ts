@@ -1,7 +1,8 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiParam,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -27,6 +28,15 @@ export class HealthController {
   @ApiResponse({ status: 200, description: 'Status de saúde das VPS' })
   getHealth() {
     return this.healthCheckService.getHealthStatus();
+  }
+
+  @Get(':vpsId')
+  @ApiOperation({ summary: 'Retorna o status de saúde de uma VPS específica' })
+  @ApiParam({ name: 'vpsId', description: 'UUID da VPS' })
+  @ApiResponse({ status: 200, description: 'Status da VPS' })
+  @ApiResponse({ status: 404, description: 'VPS não encontrada' })
+  getVpsHealth(@Param('vpsId') vpsId: string) {
+    return this.healthCheckService.getVpsHealthStatus(vpsId);
   }
 
   @Get('hub/metrics')

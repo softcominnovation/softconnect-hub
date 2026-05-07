@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
@@ -11,20 +12,13 @@ import { decryptAES256GCM } from '../../../common/crypto.util';
 import { CacheService } from '../../../cache/cache.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 
-export interface SystemMetrics {
-  cpu: number;
-  memory: { total: number; used: number; percent: number };
-  disk: { total: number; used: number; percent: number } | null;
-  collectedAt: string;
-}
-
 export interface VpsHealthStatus {
   vpsId: string;
   label: string;
   subdomain: string;
   isHealthy: boolean;
   lastHealthAt: Date | null;
-  systemMetrics?: SystemMetrics;
+  systemMetrics?: Record<string, unknown>;
   lastCheck: {
     status: string;
     responseMs: number;
@@ -35,6 +29,7 @@ export interface VpsHealthStatus {
 
 const UNHEALTHY_THRESHOLD = 3;
 const HEALTH_REDIS_TTL = 120;
+const VPS_HEALTH_DETAIL_TTL = 30;
 
 @Injectable()
 export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
@@ -163,7 +158,7 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
       };
 
       if (vps.monitorUrl) {
-        const metrics = await this.cache.get<SystemMetrics>(
+        const metrics = await this.cache.get<Record<string, unknown>>(
           `vps:metrics:${vps.id}`,
         );
         if (metrics) entry.systemMetrics = metrics;
@@ -175,6 +170,53 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
     return results;
   }
 
+  async getVpsHealthStatus(vpsId: string): Promise<VpsHealthStatus> {
+    const cacheKey = `vps:health-detail:${vpsId}`;
+    const cached = await this.cache.get<VpsHealthStatus>(cacheKey);
+    if (cached) return cached;
+
+    const vps = await this.prisma.vpsServer.findFirst({
+      where: { id: vpsId, isActive: true },
+      include: {
+        healthChecks: {
+          orderBy: { checkedAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!vps) {
+      throw new NotFoundException(`VPS ${vpsId} não encontrada`);
+    }
+
+    const entry: VpsHealthStatus = {
+      vpsId: vps.id,
+      label: vps.label,
+      subdomain: vps.subdomain,
+      isHealthy: vps.isHealthy,
+      lastHealthAt: vps.lastHealthAt,
+      lastCheck: vps.healthChecks[0]
+        ? {
+            status: vps.healthChecks[0].status,
+            responseMs: vps.healthChecks[0].responseMs,
+            errorMsg: vps.healthChecks[0].errorMsg,
+            checkedAt: vps.healthChecks[0].checkedAt,
+          }
+        : null,
+    };
+
+    if (vps.monitorUrl) {
+      const metrics = await this.cache.get<Record<string, unknown>>(
+        `vps:metrics:${vps.id}`,
+      );
+      if (metrics) entry.systemMetrics = metrics;
+    }
+
+    await this.cache.setWithTTL(cacheKey, entry, VPS_HEALTH_DETAIL_TTL);
+
+    return entry;
+  }
+
   private async collectMetrics(vps: VpsServer): Promise<void> {
     const encryptionKey = this.config.getOrThrow<string>('ENCRYPTION_KEY');
     const apiKey = vps.monitorApiKey
@@ -182,39 +224,16 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
       : undefined;
 
     try {
-      const response = await axios.get<{
-        cpu: { percent: number };
-        memory: { total: number; used: number; percent: number };
-        disks: Array<{
-          fstype: string;
-          mountpoint: string;
-          total: number;
-          used: number;
-          percent: number;
-        }>;
-      }>(`${vps.monitorUrl}/status`, {
-        headers: apiKey ? { 'x-api-key': apiKey } : {},
-        timeout: 5000,
-      });
+      const response = await axios.get<Record<string, unknown>>(
+        `${vps.monitorUrl}/status`,
+        {
+          headers: apiKey ? { 'x-api-key': apiKey } : {},
+          timeout: 5000,
+        },
+      );
 
-      const data = response.data;
-      const mainDisk =
-        data.disks?.find(
-          (d) => d.fstype === 'ext4' && d.mountpoint.includes('/host'),
-        ) ??
-        data.disks?.[0] ??
-        null;
-
-      const metrics: SystemMetrics = {
-        cpu: data.cpu?.percent ?? 0,
-        memory: data.memory,
-        disk: mainDisk
-          ? {
-              total: mainDisk.total,
-              used: mainDisk.used,
-              percent: mainDisk.percent,
-            }
-          : null,
+      const metrics: Record<string, unknown> = {
+        ...response.data,
         collectedAt: new Date().toISOString(),
       };
 
