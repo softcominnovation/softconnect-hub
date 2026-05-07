@@ -24,6 +24,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import {
   SetWebhookConfigDto,
   SyncRelayResultDto,
+  ToggleWebhookBulkResultDto,
 } from './dto/webhook-config.dto';
 
 type SafeProduct = Omit<Product, 'apiKeyHash'>;
@@ -208,6 +209,82 @@ export class ProductsService {
       select: { id: true },
     });
     if (!exists) throw new NotFoundException(`Produto ${id} não encontrado`);
+  }
+
+  async toggleWebhookBulk(
+    productId: string,
+    enabled: boolean,
+    instanceId?: string,
+  ): Promise<ToggleWebhookBulkResultDto> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { adapterType: true },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Produto ${productId} não encontrado`);
+    }
+
+    if (instanceId) {
+      const exists = await this.prisma.instance.findFirst({
+        where: { id: instanceId, productId, isActive: true },
+        select: { id: true },
+      });
+      if (!exists) {
+        throw new NotFoundException(
+          `Instância ${instanceId} não encontrada ou não pertence ao produto`,
+        );
+      }
+    }
+
+    const instances = await this.prisma.instance.findMany({
+      where: instanceId
+        ? { id: instanceId, productId, isActive: true }
+        : { productId, isActive: true },
+      include: { vps: true },
+    });
+
+    if (instances.length === 0) {
+      return { synced: 0, failed: 0, enabled };
+    }
+
+    let synced = 0;
+    let failed = 0;
+    const errors: { instanceName: string; error: string }[] = [];
+
+    for (const instance of instances) {
+      try {
+        const ctx: ProviderContext = {
+          providerUrl: instance.vps.providerUrl,
+          providerApiKey: decryptAES256GCM(
+            instance.vps.providerApiKey,
+            this.encryptionKeyHex,
+          ),
+        };
+
+        const adapter = this.adapterResolver.resolve(product.adapterType);
+        await adapter.toggleWebhook(ctx, instance.instanceName, { enabled });
+
+        synced++;
+      } catch (err) {
+        let errorDetail: string;
+        if (err instanceof HttpException) {
+          errorDetail = JSON.stringify(err.getResponse());
+        } else {
+          errorDetail = err instanceof Error ? err.message : String(err);
+        }
+        this.logger.error(
+          `[TOGGLE-WEBHOOK] falha na instância ${instance.instanceName}: ${errorDetail}`,
+        );
+        errors.push({
+          instanceName: instance.instanceName,
+          error: errorDetail,
+        });
+        failed++;
+      }
+    }
+
+    return { synced, failed, enabled, ...(errors.length > 0 && { errors }) };
   }
 
   async syncRelay(

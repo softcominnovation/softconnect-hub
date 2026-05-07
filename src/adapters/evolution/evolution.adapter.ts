@@ -350,16 +350,47 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: ToggleWebhookDto,
   ): Promise<void> {
-    const current = await this.findWebhook(ctx, instanceName);
-    const updated: SetWebhookDto = {
-      webhook: { ...current.webhook, enabled: dto.enabled },
-    };
+    const raw = await this.http.request<Record<string, unknown>>(
+      'get',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      `/webhook/find/${instanceName}`,
+    );
+
+    const src =
+      raw && typeof raw === 'object' && 'webhook' in raw
+        ? (raw.webhook as Record<string, unknown>)
+        : raw;
+
+    const url = (src?.url ?? src?.webhookUrl ?? '') as string;
+    const events = Array.isArray(src?.events) ? src.events : [];
+    const byEvents =
+      src?.byEvents !== undefined
+        ? src.byEvents
+        : src?.webhookByEvents !== undefined
+          ? src.webhookByEvents
+          : false;
+    const base64 =
+      src?.base64 !== undefined
+        ? src.base64
+        : src?.webhookBase64 !== undefined
+          ? src.webhookBase64
+          : false;
+
     await this.http.request(
       'post',
       ctx.providerUrl,
       ctx.providerApiKey,
       `/webhook/set/${instanceName}`,
-      updated,
+      {
+        webhook: {
+          enabled: dto.enabled,
+          url,
+          events,
+          byEvents,
+          base64,
+        },
+      },
     );
   }
 

@@ -336,7 +336,7 @@ describe('EvolutionAdapter', () => {
   });
 
   describe('Webhook methods', () => {
-    it('setWebhook — delegates to POST /webhook/set/:instance', async () => {
+    it('setWebhook — delegates to POST /webhook/set/:instance with byEvents and base64 defaults', async () => {
       const dto = {
         webhook: { enabled: true, url: 'https://n8n.softcom.test/webhook/wh' },
       };
@@ -375,6 +375,77 @@ describe('EvolutionAdapter', () => {
         `/webhook/find/${INSTANCE}`,
       );
       expect(result).toBe(expected);
+    });
+
+    it('toggleWebhook — fetches current config and sends correct POST preserving url/events', async () => {
+      http.request
+        .mockResolvedValueOnce({
+          url: 'https://n8n.softcom.test/webhook/wh',
+          enabled: true,
+          webhookByEvents: true,
+          webhookBase64: false,
+          events: ['MESSAGES_UPSERT'],
+        })
+        .mockResolvedValueOnce(undefined);
+
+      await adapter.toggleWebhook(CTX, INSTANCE, { enabled: false });
+
+      expect(http.request).toHaveBeenNthCalledWith(
+        1,
+        'get',
+        CTX.providerUrl,
+        CTX.providerApiKey,
+        `/webhook/find/${INSTANCE}`,
+      );
+      expect(http.request).toHaveBeenNthCalledWith(
+        2,
+        'post',
+        CTX.providerUrl,
+        CTX.providerApiKey,
+        `/webhook/set/${INSTANCE}`,
+        {
+          webhook: {
+            enabled: false,
+            url: 'https://n8n.softcom.test/webhook/wh',
+            events: ['MESSAGES_UPSERT'],
+            byEvents: true,
+            base64: false,
+          },
+        },
+      );
+    });
+
+    it('toggleWebhook — handles response wrapped in webhook key', async () => {
+      http.request
+        .mockResolvedValueOnce({
+          webhook: {
+            url: 'https://n8n.softcom.test/webhook/wh',
+            enabled: true,
+            byEvents: false,
+            base64: true,
+            events: [],
+          },
+        })
+        .mockResolvedValueOnce(undefined);
+
+      await adapter.toggleWebhook(CTX, INSTANCE, { enabled: true });
+
+      expect(http.request).toHaveBeenNthCalledWith(
+        2,
+        'post',
+        CTX.providerUrl,
+        CTX.providerApiKey,
+        `/webhook/set/${INSTANCE}`,
+        {
+          webhook: {
+            enabled: true,
+            url: 'https://n8n.softcom.test/webhook/wh',
+            events: [],
+            byEvents: false,
+            base64: true,
+          },
+        },
+      );
     });
   });
 

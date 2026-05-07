@@ -95,3 +95,54 @@ export class SyncRelayDto {
   })
   instanceId?: string;
 }
+
+export class ToggleWebhookBulkDto {
+  @ApiProperty({
+    description:
+      'true para ativar o webhook nas instâncias, false para desativar.',
+    example: false,
+  })
+  enabled!: boolean;
+
+  @ApiProperty({
+    description:
+      'ID da instância a alterar. Se omitido, aplica a todas as instâncias ativas do produto.',
+    example: 'uuid-da-instancia',
+    required: false,
+  })
+  instanceId?: string;
+}
+
+export class ToggleWebhookBulkResultDto {
+  @ApiProperty({
+    description: 'Número de instâncias atualizadas com sucesso na Evolution',
+    example: 3,
+  })
+  synced!: number;
+
+  @ApiProperty({
+    description: 'Número de instâncias que falharam',
+    example: 0,
+  })
+  failed!: number;
+
+  @ApiProperty({
+    description: 'Estado aplicado (true = ativado, false = desativado)',
+    example: false,
+  })
+  enabled!: boolean;
+
+  @ApiProperty({
+    description:
+      'Detalhes de erro por instância que falhou — contém o retorno real da Evolution',
+    type: [Object],
+    required: false,
+    example: [
+      {
+        instanceName: 'teste',
+        error: '{"status":400,"error":"Bad Request","message":"..."}',
+      },
+    ],
+  })
+  errors?: { instanceName: string; error: string }[];
+}

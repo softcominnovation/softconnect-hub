@@ -23,6 +23,8 @@ import {
   SetWebhookConfigDto,
   SyncRelayDto,
   SyncRelayResultDto,
+  ToggleWebhookBulkDto,
+  ToggleWebhookBulkResultDto,
   WebhookConfigResponseDto,
 } from './dto/webhook-config.dto';
 import { ProductsService } from './products.service';
@@ -156,5 +158,31 @@ export class ProductsController {
   @ApiResponse({ status: 404, description: 'Produto não encontrado' })
   syncRelay(@Param('id') id: string, @Body() dto?: SyncRelayDto) {
     return this.productsService.syncRelay(id, dto?.instanceId);
+  }
+
+  @Post(':id/toggle-webhook')
+  @ApiOperation({
+    summary: 'Ativa ou desativa o webhook de todas as instâncias do produto',
+    description:
+      'Chama toggleWebhook na Evolution para cada instância ativa do produto (ou apenas para uma, se instanceId for informado). ' +
+      'Útil para pausar/retomar a entrega de eventos sem alterar a configuração de relay.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiBody({ type: ToggleWebhookBulkDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Resultado por instância',
+    type: ToggleWebhookBulkResultDto,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Produto ou instância não encontrado',
+  })
+  toggleWebhook(@Param('id') id: string, @Body() dto: ToggleWebhookBulkDto) {
+    return this.productsService.toggleWebhookBulk(
+      id,
+      dto.enabled,
+      dto.instanceId,
+    );
   }
 }
