@@ -245,7 +245,7 @@ export class ProductsService {
     });
 
     if (instances.length === 0) {
-      return { synced: 0, failed: 0, enabled };
+      return { total: 0, synced: 0, failed: 0, enabled };
     }
 
     let synced = 0;
@@ -284,7 +284,13 @@ export class ProductsService {
       }
     }
 
-    return { synced, failed, enabled, ...(errors.length > 0 && { errors }) };
+    return {
+      total: instances.length,
+      synced,
+      failed,
+      enabled,
+      ...(errors.length > 0 && { errors }),
+    };
   }
 
   async syncRelay(
@@ -322,6 +328,7 @@ export class ProductsService {
 
     if (instances.length === 0) {
       return {
+        total: 0,
         synced: 0,
         failed: 0,
         reason: 'Nenhuma instância ativa encontrada',
@@ -391,7 +398,13 @@ export class ProductsService {
       }
     }
 
-    return { synced, failed, targetUrl, ...(errors.length > 0 && { errors }) };
+    return {
+      total: instances.length,
+      synced,
+      failed,
+      targetUrl,
+      ...(errors.length > 0 && { errors }),
+    };
   }
 
   async setWebhookConfig(

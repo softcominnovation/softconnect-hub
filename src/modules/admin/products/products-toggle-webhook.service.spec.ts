@@ -103,7 +103,7 @@ describe('ProductsService — toggleWebhookBulk', () => {
 
     const result = await service.toggleWebhookBulk('prod-1', false);
 
-    expect(result).toEqual({ synced: 0, failed: 0, enabled: false });
+    expect(result).toEqual({ total: 0, synced: 0, failed: 0, enabled: false });
     expect(mockToggleWebhook).not.toHaveBeenCalled();
   });
 
@@ -119,7 +119,7 @@ describe('ProductsService — toggleWebhookBulk', () => {
 
     const result = await service.toggleWebhookBulk('prod-1', true);
 
-    expect(result).toEqual({ synced: 2, failed: 0, enabled: true });
+    expect(result).toEqual({ total: 2, synced: 2, failed: 0, enabled: true });
     expect(mockToggleWebhook).toHaveBeenCalledTimes(2);
     expect(mockToggleWebhook).toHaveBeenCalledWith(
       expect.objectContaining({ providerUrl: mockVps.providerUrl }),
@@ -142,7 +142,7 @@ describe('ProductsService — toggleWebhookBulk', () => {
 
     const result = await service.toggleWebhookBulk('prod-1', false, 'inst-1');
 
-    expect(result).toEqual({ synced: 1, failed: 0, enabled: false });
+    expect(result).toEqual({ total: 1, synced: 1, failed: 0, enabled: false });
     expect(mockToggleWebhook).toHaveBeenCalledTimes(1);
   });
 
@@ -160,6 +160,7 @@ describe('ProductsService — toggleWebhookBulk', () => {
 
     const result = await service.toggleWebhookBulk('prod-1', false);
 
+    expect(result.total).toBe(2);
     expect(result.synced).toBe(1);
     expect(result.failed).toBe(1);
     expect(result.enabled).toBe(false);

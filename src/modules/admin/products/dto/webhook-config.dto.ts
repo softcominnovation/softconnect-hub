@@ -46,6 +46,13 @@ export class WebhookConfigResponseDto {
 
 export class SyncRelayResultDto {
   @ApiProperty({
+    description:
+      'Total de instâncias ativas encontradas no Hub para este produto',
+    example: 4,
+  })
+  total!: number;
+
+  @ApiProperty({
     description: 'Número de instâncias atualizadas com sucesso na Evolution',
     example: 3,
   })
@@ -114,6 +121,13 @@ export class ToggleWebhookBulkDto {
 }
 
 export class ToggleWebhookBulkResultDto {
+  @ApiProperty({
+    description:
+      'Total de instâncias ativas encontradas no Hub para este produto',
+    example: 4,
+  })
+  total!: number;
+
   @ApiProperty({
     description: 'Número de instâncias atualizadas com sucesso na Evolution',
     example: 3,
