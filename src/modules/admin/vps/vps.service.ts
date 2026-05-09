@@ -15,11 +15,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateVpsDto } from './dto/create-vps.dto';
 import { UpdateVpsDto } from './dto/update-vps.dto';
 
-type DecryptedVps = Omit<
-  VpsServer,
-  'providerApiKey' | 'managerApiKey' | 'monitorApiKey'
-> & {
-  providerApiKey: string;
+type DecryptedVps = Omit<VpsServer, 'managerApiKey' | 'monitorApiKey'> & {
   managerApiKey: string | null;
   monitorApiKey: string | null;
 };
@@ -41,9 +37,6 @@ export class VpsService {
           label: dto.label,
           subdomain: dto.subdomain,
           ip: dto.ip,
-          providerUrl: dto.providerUrl,
-          providerApiKey: encryptAES256GCM(dto.providerApiKey, key),
-          adapterType: dto.adapterType ?? 'evolution',
           managerType: dto.managerType ?? null,
           managerUrl: dto.managerUrl ?? null,
           managerApiKey: dto.managerApiKey
@@ -70,7 +63,9 @@ export class VpsService {
   }
 
   async findAll(): Promise<DecryptedVps[]> {
-    const list = await this.prisma.vpsServer.findMany();
+    const list = await this.prisma.vpsServer.findMany({
+      include: { providers: true },
+    });
     return list.map((vps) => this.decrypt(vps));
   }
 
@@ -80,9 +75,6 @@ export class VpsService {
     const key = this.encryptionKey;
     const data: Record<string, unknown> = { ...dto };
 
-    if (dto.providerApiKey) {
-      data.providerApiKey = encryptAES256GCM(dto.providerApiKey, key);
-    }
     if (dto.managerApiKey) {
       data.managerApiKey = encryptAES256GCM(dto.managerApiKey, key);
     }
@@ -91,16 +83,6 @@ export class VpsService {
     }
 
     const vps = await this.prisma.vpsServer.update({ where: { id }, data });
-
-    if (dto.providerApiKey) {
-      const instances = await this.prisma.instance.findMany({
-        where: { vpsId: id, isActive: true },
-        select: { id: true },
-      });
-      await Promise.all(
-        instances.map((i) => this.cache.del(`instance:${i.id}`)),
-      );
-    }
 
     return this.decrypt(vps);
   }
@@ -119,7 +101,6 @@ export class VpsService {
     const key = this.encryptionKey;
     return {
       ...vps,
-      providerApiKey: decryptAES256GCM(vps.providerApiKey, key),
       managerApiKey: vps.managerApiKey
         ? decryptAES256GCM(vps.managerApiKey, key)
         : null,

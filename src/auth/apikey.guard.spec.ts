@@ -9,11 +9,12 @@ const KEY_HASH = hashSHA256(RAW_KEY);
 
 const PAYLOAD: AuthCachePayload = {
   productId: 'prod-1',
+  apiKeyHash: KEY_HASH,
   isActive: true,
   origins: [],
   hubRelay: false,
   adapterType: 'evolution',
-  vpsId: 'vps-1',
+  vpsProviderId: 'vps-1',
   batchWebhookEnabled: false,
   batchWebhookUrl: null,
 };
@@ -65,7 +66,7 @@ describe('ApiKeyGuard', () => {
       origins: [],
       hubRelay: false,
       adapterType: 'evolution',
-      vpsId: 'vps-1',
+      vpsProviderId: 'vps-1',
       batchWebhookEnabled: false,
       batchWebhookUrl: null,
     });
@@ -101,3 +102,4 @@ describe('ApiKeyGuard', () => {
     await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 });
+

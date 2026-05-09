@@ -8,7 +8,7 @@ import { AppConfig } from '../config/config.schema';
 export interface ResolvedInstance {
   providerUrl: string;
   providerApiKey: string;
-  vpsId: string;
+  vpsProviderId: string;
   instanceId: string;
   instanceName: string;
   adapterType: string;
@@ -51,7 +51,7 @@ export class InstanceResolverService {
     const instance = await this.prisma.instance.findFirst({
       where: { productId, instanceName, isActive: true },
       include: {
-        vps: true,
+        vpsProvider: true,
         product: true,
       },
     });
@@ -61,12 +61,12 @@ export class InstanceResolverService {
     }
 
     const resolved: ResolvedInstance = {
-      providerUrl: instance.vps.providerUrl,
+      providerUrl: instance.vpsProvider.providerUrl,
       providerApiKey: decryptAES256GCM(
-        instance.vps.providerApiKey,
+        instance.vpsProvider.providerApiKey,
         this.encryptionKeyHex,
       ),
-      vpsId: instance.vpsId,
+      vpsProviderId: instance.vpsProviderId,
       instanceId: instance.id,
       instanceName: instance.instanceName,
       adapterType: instance.product.adapterType,
@@ -103,7 +103,7 @@ export class InstanceResolverService {
     const instance = await this.prisma.instance.findFirst({
       where: { id: instanceId, productId, isActive: true },
       include: {
-        vps: true,
+        vpsProvider: true,
         product: true,
       },
     });
@@ -113,12 +113,12 @@ export class InstanceResolverService {
     }
 
     const resolved: ResolvedInstance = {
-      providerUrl: instance.vps.providerUrl,
+      providerUrl: instance.vpsProvider.providerUrl,
       providerApiKey: decryptAES256GCM(
-        instance.vps.providerApiKey,
+        instance.vpsProvider.providerApiKey,
         this.encryptionKeyHex,
       ),
-      vpsId: instance.vpsId,
+      vpsProviderId: instance.vpsProviderId,
       instanceId: instance.id,
       instanceName: instance.instanceName,
       adapterType: instance.product.adapterType,
@@ -133,3 +133,4 @@ export class InstanceResolverService {
     return resolved;
   }
 }
+

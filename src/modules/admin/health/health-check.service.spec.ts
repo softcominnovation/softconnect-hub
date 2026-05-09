@@ -1,6 +1,5 @@
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
-import { VpsServer } from '@prisma/client';
 import { CacheService } from '../../../cache/cache.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { HealthCheckService } from './health-check.service';
@@ -16,9 +15,12 @@ jest.mock('../../../common/crypto.util', () => ({
 }));
 
 const mockPrisma = {
-  vpsServer: {
+  vpsProvider: {
     findMany: jest.fn(),
     update: jest.fn(),
+  },
+  vpsServer: {
+    findMany: jest.fn(),
   },
   healthCheck: {
     create: jest.fn(),
@@ -27,31 +29,36 @@ const mockPrisma = {
 
 const mockCache = {
   setWithTTL: jest.fn(),
+  get: jest.fn().mockResolvedValue(null),
 };
 
 const mockConfig = {
   getOrThrow: jest.fn().mockReturnValue('a'.repeat(32)),
 };
 
-const makeVps = (overrides: Partial<VpsServer> = {}): VpsServer =>
-  ({
+const makeProvider = (overrides = {}) => ({
+  id: 'provider-1',
+  vpsId: 'vps-1',
+  label: 'EvoLab Provider',
+  providerUrl: 'http://provider.test',
+  providerApiKey: 'encrypted-key',
+  adapterType: 'evolution',
+  isHealthy: true,
+  lastHealthAt: null,
+  isActive: true,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  vps: {
     id: 'vps-1',
     label: 'EvoLab',
     subdomain: 'evo.test.com',
     ip: '1.2.3.4',
-    providerUrl: 'http://provider.test',
-    providerApiKey: 'encrypted-key',
-    adapterType: 'evolution',
-    managerType: null,
-    managerUrl: null,
-    managerApiKey: null,
-    isHealthy: true,
-    lastHealthAt: null,
-    isActive: true,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    ...overrides,
-  }) as VpsServer;
+    monitorUrl: null,
+    monitorApiKey: null,
+  },
+  healthChecks: [],
+  ...overrides,
+});
 
 async function buildService(): Promise<HealthCheckService> {
   const module: TestingModule = await Test.createTestingModule({
@@ -78,111 +85,115 @@ describe('HealthCheckService', () => {
     service.onModuleDestroy();
   });
 
-  describe('checkVps — healthy response', () => {
+  describe('checkProvider  healthy response', () => {
     it('should create a healthy HealthCheck record', async () => {
       mockedAxios.get = jest.fn().mockResolvedValue({ status: 200 });
       mockPrisma.healthCheck.create.mockResolvedValue({});
-      mockPrisma.vpsServer.update.mockResolvedValue({});
+      mockPrisma.vpsProvider.update.mockResolvedValue({});
 
-      await service.checkVps(makeVps());
+      await service.checkProvider(makeProvider());
 
       expect(mockPrisma.healthCheck.create).toHaveBeenCalledWith(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          data: expect.objectContaining({ vpsId: 'vps-1', status: 'healthy' }),
+          data: expect.objectContaining({ vpsProviderId: 'provider-1', status: 'healthy' }),
         }),
       );
     });
 
-    it('should mark VPS as healthy again on recovery', async () => {
+    it('should mark provider as healthy again on recovery', async () => {
       mockedAxios.get = jest.fn().mockResolvedValue({ status: 200 });
       mockPrisma.healthCheck.create.mockResolvedValue({});
 
-      const vps = makeVps({ isHealthy: false });
-      mockPrisma.vpsServer.update.mockResolvedValue({});
+      const provider = makeProvider({ isHealthy: false });
+      mockPrisma.vpsProvider.update.mockResolvedValue({});
 
-      await service.checkVps(vps);
+      await service.checkProvider(provider);
 
-      expect(mockPrisma.vpsServer.update).toHaveBeenCalledWith(
+      expect(mockPrisma.vpsProvider.update).toHaveBeenCalledWith(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           data: expect.objectContaining({ isHealthy: true }),
         }),
       );
-      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
-        'vps:health:vps-1',
-        { isHealthy: true },
-        expect.any(Number),
-      );
     });
   });
 
-  describe('checkVps — unhealthy response', () => {
+  describe('checkProvider  unhealthy response', () => {
     it('should create an unhealthy HealthCheck record on error', async () => {
       mockedAxios.get = jest.fn().mockRejectedValue(new Error('timeout'));
       mockPrisma.healthCheck.create.mockResolvedValue({});
 
-      await service.checkVps(makeVps());
+      await service.checkProvider(makeProvider());
 
       expect(mockPrisma.healthCheck.create).toHaveBeenCalledWith(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           data: expect.objectContaining({
-            vpsId: 'vps-1',
+            vpsProviderId: 'provider-1',
             status: 'unhealthy',
           }),
         }),
       );
     });
 
-    it('should mark VPS as unhealthy after 3 consecutive failures', async () => {
+    it('should mark provider as unhealthy after 3 consecutive failures', async () => {
       mockedAxios.get = jest.fn().mockRejectedValue(new Error('timeout'));
       mockPrisma.healthCheck.create.mockResolvedValue({});
-      mockPrisma.vpsServer.update.mockResolvedValue({});
+      mockPrisma.vpsProvider.update.mockResolvedValue({});
 
-      const vps = makeVps({ isHealthy: true });
+      const provider = makeProvider({ isHealthy: true });
 
-      await service.checkVps(vps);
-      await service.checkVps(vps);
-      await service.checkVps(vps);
+      await service.checkProvider(provider);
+      await service.checkProvider(provider);
+      await service.checkProvider(provider);
 
-      expect(mockPrisma.vpsServer.update).toHaveBeenCalledWith(
+      expect(mockPrisma.vpsProvider.update).toHaveBeenCalledWith(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           data: expect.objectContaining({ isHealthy: false }),
         }),
       );
-      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
-        'vps:health:vps-1',
-        { isHealthy: false },
-        expect.any(Number),
-      );
     });
 
-    it('should NOT update VPS before reaching threshold of 3', async () => {
+    it('should NOT update provider before reaching threshold of 3', async () => {
       mockedAxios.get = jest.fn().mockRejectedValue(new Error('timeout'));
       mockPrisma.healthCheck.create.mockResolvedValue({});
 
-      const vps = makeVps({ isHealthy: true });
+      const provider = makeProvider({ isHealthy: true });
 
-      await service.checkVps(vps);
-      await service.checkVps(vps);
+      await service.checkProvider(provider);
+      await service.checkProvider(provider);
 
-      expect(mockPrisma.vpsServer.update).not.toHaveBeenCalled();
+      expect(mockPrisma.vpsProvider.update).not.toHaveBeenCalled();
     });
   });
 
   describe('getHealthStatus', () => {
-    it('should return a consolidated status list', async () => {
+    it('should return a consolidated status list grouped by VPS', async () => {
       mockPrisma.vpsServer.findMany.mockResolvedValue([
         {
-          ...makeVps(),
-          healthChecks: [
+          id: 'vps-1',
+          label: 'EvoLab',
+          subdomain: 'evo.test.com',
+          monitorUrl: null,
+          isActive: true,
+          providers: [
             {
-              status: 'healthy',
-              responseMs: 50,
-              errorMsg: null,
-              checkedAt: new Date(),
+              id: 'provider-1',
+              label: 'EvoLab Provider',
+              adapterType: 'evolution',
+              providerUrl: 'http://provider.test',
+              isHealthy: true,
+              lastHealthAt: null,
+              healthChecks: [
+                {
+                  status: 'healthy',
+                  responseMs: 50,
+                  errorMsg: null,
+                  checkedAt: new Date(),
+                },
+              ],
             },
           ],
         },
@@ -193,20 +204,33 @@ describe('HealthCheckService', () => {
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
         vpsId: 'vps-1',
+        label: 'EvoLab',
+      });
+      expect(result[0].providers).toHaveLength(1);
+      expect(result[0].providers[0]).toMatchObject({
+        providerId: 'provider-1',
         isHealthy: true,
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         lastCheck: expect.objectContaining({ status: 'healthy' }),
       });
     });
 
-    it('should return lastCheck as null when no checks exist', async () => {
+    it('should return VPS with empty providers when none exist', async () => {
       mockPrisma.vpsServer.findMany.mockResolvedValue([
-        { ...makeVps(), healthChecks: [] },
+        {
+          id: 'vps-1',
+          label: 'EvoLab',
+          subdomain: 'evo.test.com',
+          monitorUrl: null,
+          isActive: true,
+          providers: [],
+        },
       ]);
 
       const result = await service.getHealthStatus();
 
-      expect(result[0].lastCheck).toBeNull();
+      expect(result).toHaveLength(1);
+      expect(result[0].providers).toHaveLength(0);
     });
   });
 });

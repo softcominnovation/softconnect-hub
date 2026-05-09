@@ -30,11 +30,11 @@ export class CreateProductDto {
   hubRelay?: boolean;
 
   @ApiProperty({
-    description: 'ID da VPS vinculada ao produto',
-    example: 'uuid-da-vps',
+    description: 'ID do VpsProvider vinculado ao produto',
+    example: 'uuid-do-provider',
     required: false,
   })
-  vpsId?: string;
+  vpsProviderId?: string;
 
   @ApiProperty({
     description: 'Ativa notificação de resultado batch via webhook',

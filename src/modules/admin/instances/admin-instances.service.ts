@@ -52,7 +52,7 @@ export class AdminInstancesService {
         origins: true,
         hubRelay: true,
         adapterType: true,
-        vpsId: true,
+        vpsProviderId: true,
         batchWebhookEnabled: true,
         batchWebhookUrl: true,
       },
@@ -69,7 +69,7 @@ export class AdminInstancesService {
       origins: product.origins,
       hubRelay: product.hubRelay,
       adapterType: product.adapterType,
-      vpsId: product.vpsId,
+      vpsProviderId: product.vpsProviderId,
       batchWebhookEnabled: product.batchWebhookEnabled,
       batchWebhookUrl: product.batchWebhookUrl,
     };
@@ -212,14 +212,14 @@ export class AdminInstancesService {
   ): Promise<{ result: 'created' | 'skipped'; hubInstanceId: string }> {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true, vpsId: true, isActive: true },
+      select: { id: true, vpsProviderId: true, isActive: true },
     });
 
     if (!product)
       throw new NotFoundException(`Produto ${productId} não encontrado`);
     if (!product.isActive) throw new BadRequestException('Produto inativo');
-    if (!product.vpsId)
-      throw new BadRequestException('Produto sem VPS associada');
+    if (!product.vpsProviderId)
+      throw new BadRequestException('Produto sem VpsProvider associado');
 
     const existing = await this.prisma.instance.findFirst({
       where: { productId, providerInstanceId: dto.id },
@@ -249,7 +249,7 @@ export class AdminInstancesService {
     const created = await this.prisma.instance.create({
       data: {
         productId,
-        vpsId: product.vpsId,
+        vpsProviderId: product.vpsProviderId,
         instanceName: dto.name,
         providerInstanceId: dto.id,
         instanceToken: dto.token,
@@ -270,21 +270,21 @@ export class AdminInstancesService {
   async importBulkInstances(productId: string): Promise<ImportBulkResultDto> {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true, vpsId: true, isActive: true },
+      select: { id: true, vpsProviderId: true, isActive: true },
     });
 
     if (!product)
       throw new NotFoundException(`Produto ${productId} não encontrado`);
     if (!product.isActive) throw new BadRequestException('Produto inativo');
-    if (!product.vpsId)
-      throw new BadRequestException('Produto sem VPS associada');
+    if (!product.vpsProviderId)
+      throw new BadRequestException('Produto sem VpsProvider associado');
 
-    const vps = await this.prisma.vpsServer.findUnique({
-      where: { id: product.vpsId, isActive: true },
+    const vps = await this.prisma.vpsProvider.findUnique({
+      where: { id: product.vpsProviderId, isActive: true },
       select: { id: true, providerUrl: true, providerApiKey: true },
     });
 
-    if (!vps) throw new NotFoundException('VPS não encontrada ou inativa');
+    if (!vps) throw new NotFoundException('VpsProvider nao encontrado ou inativo');
 
     const decryptedApiKey = decryptAES256GCM(
       vps.providerApiKey,
@@ -359,7 +359,7 @@ export class AdminInstancesService {
         const record = await this.prisma.instance.create({
           data: {
             productId,
-            vpsId: vps.id,
+            vpsProviderId: vps.id,
             instanceName: evName,
             providerInstanceId: evId,
             instanceToken: evToken || null,
@@ -477,3 +477,5 @@ export interface HubInstanceDto {
   createdAt: Date;
   updatedAt: Date;
 }
+
+

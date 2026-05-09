@@ -72,7 +72,7 @@ export class ProductsService {
           adapterType: dto.adapterType ?? 'evolution',
           origins: dto.origins ?? [],
           hubRelay: dto.hubRelay ?? false,
-          vpsId: dto.vpsId ?? null,
+          vpsProviderId: dto.vpsProviderId ?? null,
           batchWebhookEnabled: dto.batchWebhookEnabled ?? false,
           batchWebhookUrl: dto.batchWebhookUrl ?? null,
         },
@@ -91,7 +91,7 @@ export class ProductsService {
         err.code === 'P2003'
       ) {
         throw new UnprocessableEntityException(
-          'vpsId inválido: VPS não encontrada',
+          'vpsProviderId inválido: VpsProvider não encontrado',
         );
       }
       throw err;
@@ -110,7 +110,7 @@ export class ProductsService {
         batchWebhookEnabled: true,
         batchWebhookUrl: true,
         isActive: true,
-        vpsId: true,
+        vpsProviderId: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -130,7 +130,7 @@ export class ProductsService {
         batchWebhookEnabled: true,
         batchWebhookUrl: true,
         isActive: true,
-        vpsId: true,
+        vpsProviderId: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -157,7 +157,7 @@ export class ProductsService {
         err.code === 'P2003'
       ) {
         throw new UnprocessableEntityException(
-          'vpsId inválido: VPS não encontrada',
+          'vpsProviderId inválido: VpsProvider não encontrado',
         );
       }
       throw err;
@@ -241,7 +241,7 @@ export class ProductsService {
       where: instanceId
         ? { id: instanceId, productId, isActive: true }
         : { productId, isActive: true },
-      include: { vps: true },
+      include: { vpsProvider: true },
     });
 
     if (instances.length === 0) {
@@ -255,9 +255,9 @@ export class ProductsService {
     for (const instance of instances) {
       try {
         const ctx: ProviderContext = {
-          providerUrl: instance.vps.providerUrl,
+          providerUrl: instance.vpsProvider.providerUrl,
           providerApiKey: decryptAES256GCM(
-            instance.vps.providerApiKey,
+            instance.vpsProvider.providerApiKey,
             this.encryptionKeyHex,
           ),
         };
@@ -323,7 +323,7 @@ export class ProductsService {
       where: instanceId
         ? { id: instanceId, productId, isActive: true }
         : { productId, isActive: true },
-      include: { vps: true },
+      include: { vpsProvider: true },
     });
 
     if (instances.length === 0) {
@@ -362,9 +362,9 @@ export class ProductsService {
     for (const instance of instances) {
       try {
         const ctx: ProviderContext = {
-          providerUrl: instance.vps.providerUrl,
+          providerUrl: instance.vpsProvider.providerUrl,
           providerApiKey: decryptAES256GCM(
-            instance.vps.providerApiKey,
+            instance.vpsProvider.providerApiKey,
             this.encryptionKeyHex,
           ),
         };

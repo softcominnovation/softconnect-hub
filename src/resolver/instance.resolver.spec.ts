@@ -7,7 +7,7 @@ import { InstanceResolverService } from './instance.resolver';
 
 const MOCK_ENCRYPTION_KEY = 'a'.repeat(64);
 
-const mockVps = {
+const mockVpsProvider = {
   providerUrl: 'https://evo.example.com',
   providerApiKey: 'encrypted-key',
 };
@@ -15,10 +15,10 @@ const mockVps = {
 const mockInstance = {
   id: 'inst-1',
   productId: 'prod-1',
-  vpsId: 'vps-1',
+  vpsProviderId: 'vps-provider-1',
   instanceName: 'test-instance',
   isActive: true,
-  vps: mockVps,
+  vpsProvider: mockVpsProvider,
   product: { adapterType: 'evolution' },
 };
 
@@ -76,7 +76,7 @@ describe('InstanceResolverService', () => {
       const cached = {
         providerUrl: 'https://evo.example.com',
         providerApiKey: 'decrypted-api-key',
-        vpsId: 'vps-1',
+        vpsProviderId: 'vps-provider-1',
         instanceId: 'inst-1',
         instanceName: 'test-instance',
         adapterType: 'evolution',
@@ -85,7 +85,9 @@ describe('InstanceResolverService', () => {
 
       const result = await service.resolve('prod-1', 'test-instance');
 
-      expect(mockCache.get).toHaveBeenCalledWith('instance:prod-1:test-instance');
+      expect(mockCache.get).toHaveBeenCalledWith(
+        'instance:prod-1:test-instance',
+      );
       expect(mockPrisma.instance.findFirst).not.toHaveBeenCalled();
       expect(result).toEqual(cached);
     });
@@ -108,7 +110,11 @@ describe('InstanceResolverService', () => {
       );
       expect(mockCache.setWithTTL).toHaveBeenCalledWith(
         'instance:inst-1',
-        expect.objectContaining({ instanceId: 'inst-1', vpsId: 'vps-1', instanceName: 'test-instance' }),
+        expect.objectContaining({
+          instanceId: 'inst-1',
+          vpsProviderId: 'vps-provider-1',
+          instanceName: 'test-instance',
+        }),
         300,
       );
       expect(result.adapterType).toBe('evolution');
@@ -131,7 +137,7 @@ describe('InstanceResolverService', () => {
       const cached = {
         providerUrl: 'https://evo.example.com',
         providerApiKey: 'decrypted-api-key',
-        vpsId: 'vps-1',
+        vpsProviderId: 'vps-provider-1',
         instanceId: 'inst-1',
         instanceName: 'test-instance',
         adapterType: 'evolution',
@@ -159,7 +165,10 @@ describe('InstanceResolverService', () => {
       );
       expect(mockCache.setWithTTL).toHaveBeenCalledWith(
         'instance:inst-1',
-        expect.objectContaining({ instanceId: 'inst-1', instanceName: 'test-instance' }),
+        expect.objectContaining({
+          instanceId: 'inst-1',
+          instanceName: 'test-instance',
+        }),
         300,
       );
       expect(result.instanceName).toBe('test-instance');
@@ -204,7 +213,7 @@ describe('InstanceResolverService', () => {
       const cached = {
         providerUrl: 'https://evo.example.com',
         providerApiKey: 'decrypted-api-key',
-        vpsId: 'vps-1',
+        vpsProviderId: 'vps-provider-1',
         instanceId: 'inst-1',
         instanceName: 'test-instance',
         adapterType: 'evolution',

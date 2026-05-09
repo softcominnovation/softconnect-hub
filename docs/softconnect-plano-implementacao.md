@@ -30,6 +30,7 @@
 | **Passo 2.5** — Dashboard Auth & Usuários Admin | ⏳ **Implementado — Aguardando gate de validação** |
 | **Passo 3** — Dynamic Adapters & Adapter Registry | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 4** — Implementação do EvolutionAdapter | ⏳ **Implementado — Aguardando gate de validação** |
+| **Passo 4.5** — Arquitetura Multi-Provider | ✅ **Implementado — 128/128 testes — Aguardando gate de validação** |
 | **Swagger (incremental)** — Admin API + tipagem completa | ✅ **Implementado — rotas admin com schemas, params e query docs** |
 | **Global prefix `/api/v1`** — todas as rotas da API | ✅ **Implementado — `app.setGlobalPrefix('api/v1')` em `main.ts`** |
 | **Passo 5** — Controllers do Data Plane | ✅ **100% Concluído — Gate de validação aprovado** |
@@ -251,6 +252,63 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 - [x] Confirmar que o circuit breaker funciona ao simular a VPS fora do ar
 - [x] Confirmar que o adapter é stateless — mesma instância servindo chamadas com `ProviderContext` diferentes
 - [x] Avaliar ajustes ou métodos adicionais necessários
+
+---
+
+## Passo 4.5: Arquitetura Multi-Provider
+
+*Objetivo: Separar `VpsServer` (máquina) de `VpsProvider` (endpoint de API), permitindo que uma VPS hospede N providers independentes com adapters distintos.*
+
+### 4.5.1 — Schema & Migration
+
+- [x] Criar modelo `VpsProvider` no `schema.prisma` com campos: `id`, `vpsId`, `label`, `providerUrl`, `providerApiKey` (AES-256-GCM), `adapterType`, `isActive`, `isHealthy`, `lastHealthAt`, `createdAt`, `updatedAt`
+- [x] Remover campos `providerUrl`, `providerApiKey`, `adapterType`, `isHealthy`, `lastHealthAt` de `VpsServer`
+- [x] Adicionar `vpsProviderId` em `Product` (FK → `VpsProvider`) substituindo `vpsId` (FK → `VpsServer`)
+- [x] Adicionar `vpsProviderId` em `Instance` substituindo relação direta com `VpsServer`
+- [x] Adicionar `vpsProviderId` em `HealthCheck` substituindo `vpsId`
+- [x] Criar migration `20260508000000_init_multi_provider` — migration única (reset + seed)
+- [x] Executar `prisma migrate reset --force` + `npx prisma generate`
+- [x] Criar backup: `backup_whatshub_20260508_181218.dump`
+
+### 4.5.2 — VPS Provider CRUD (Admin Plane)
+
+- [x] Criar `CreateVpsProviderDto` e `UpdateVpsProviderDto`
+- [x] Criar `VpsProviderService` com métodos: `create`, `findAll`, `update`, `deactivate`
+- [x] Criar `VpsProviderController` com rotas aninhadas sob `vps/:vpsId/providers`
+- [x] Criar `VpsProviderModule` e registrar em `AdminModule`
+- [x] `PUT /vps/:vpsId/providers/:id` invalida cache Redis das instâncias do provider ao mudar `providerUrl`/`providerApiKey`
+
+### 4.5.3 — Atualização dos serviços existentes
+
+- [x] Atualizar `VpsService`: remover campos de provider do DTO, incluir `providers[]` na resposta de `findAll`
+- [x] Atualizar `ProductService`: `vpsId` → `vpsProviderId` em todos os DTOs, queries e respostas
+- [x] Atualizar `ApiKeyGuard`: `AuthCachePayload.vpsId` → `vpsProviderId`; query Prisma usa `vpsProviderId`
+- [x] Atualizar `InstanceResolverService`: `ResolvedInstance.vpsId` → `vpsProviderId`; `include: { vpsProvider: true }` em vez de `vps`
+- [x] Atualizar `AdminInstancesService`: todas as referências `vps.providerUrl` → `vpsProvider.providerUrl`
+- [x] Atualizar `IpWhitelistGuard`: consulta `vpsProvider.findFirst` para validar IP do webhook interno
+- [x] Atualizar `HealthCheckService`: `runChecks()` itera `VpsProvider` (não `VpsServer`); `VpsHealthStatus` ganha campos `providerId`, `providerLabel`; chaves Redis: `provider:health:{id}` e `provider:health-detail:{id}`
+
+### 4.5.4 — Testes
+
+- [x] Todos os testes existentes atualizados para o novo schema (128/128 passando)
+- [x] `tsc --noEmit`: 0 erros
+- [x] ESLint: 0 erros de lógica
+
+### 4.5.5 — Documentação gerada
+
+- [x] Criar `docs/softconnect-spec-multi-provider.md` — spec técnica completa da arquitetura multi-provider
+- [x] Criar `docs/softconnect-manager-frontend-changes.md` — guia de breaking changes para o agente de frontend
+- [x] Criar `docs/multi-provider-impact-analysis.html` — análise de impacto de todos os 57 endpoints
+
+### ✅ Validação do Desenvolvedor — Passo 4.5
+
+- [ ] Verificar que `POST /admin/vps/:vpsId/providers` cria provider e persiste `providerApiKey` encriptado
+- [ ] Verificar que `GET /admin/products` retorna `vpsProviderId` (não `vpsId`)
+- [ ] Verificar que `POST /api/v1/instance/create` ainda funciona com produto vinculado a `VpsProvider`
+- [ ] Confirmar que Redis não tem entradas antigas de `auth:*` após flush
+- [ ] Confirmar que `GET /admin/health` retorna array por provider (com `providerId` e `providerLabel`)
+- [x] Renomear parâmetro `:vpsId` → `:providerId` em `health.controller.ts` (issue I-01)
+- [ ] Atualizar `softconnect-spec-tecnica.md` com schema atualizado (issue I-03)
 
 ---
 
@@ -678,11 +736,11 @@ Imports de dentro de `src/common/` para outros módulos **não mudam** — `comm
 
 ### ✅ Validação do Desenvolvedor — Passo 7.5
 
-- [ ] Criar produto com `batchWebhookEnabled: true` e `batchWebhookUrl` válida via `POST /api/v1/admin/products`
-- [ ] Confirmar que criar produto com `batchWebhookEnabled: true` sem `batchWebhookUrl` retorna `400 Bad Request`
-- [ ] Disparar um lote via `POST /api/v1/message/sendText/{instanceId}/batch` e confirmar que o webhook é chamado **uma vez por mensagem** (não uma vez ao final do lote)
-- [ ] Confirmar que cada chamada de webhook carrega `X-Hub-Signature`, `X-Hub-Event: batch.message.result` e o payload com `success`, `processedAt` e `payload` (mensagem original)
-- [ ] Verificar assinatura HMAC no receptor: `sha256=HMAC-SHA256(apiKeyHash, JSON.stringify(body))`
+- [x] Criar produto com `batchWebhookEnabled: true` e `batchWebhookUrl` válida via `POST /api/v1/admin/products`
+- [x] Confirmar que criar produto com `batchWebhookEnabled: true` sem `batchWebhookUrl` retorna `400 Bad Request`
+- [x] Disparar um lote via `POST /api/v1/message/sendText/{instanceId}/batch` e confirmar que o webhook é chamado **uma vez por mensagem** (não uma vez ao final do lote)
+- [x] Confirmar que cada chamada de webhook carrega `X-Hub-Signature`, `X-Hub-Event: batch.message.result` e o payload com `success`, `processedAt` e `payload` (mensagem original)
+- [x] Verificar assinatura HMAC no receptor: `sha256=HMAC-SHA256(apiKeyHash, JSON.stringify(body))`
 
 > **🔒 O Passo 8 só pode ser iniciado após este gate estar concluído e o desenvolvedor solicitar explicitamente.**
 

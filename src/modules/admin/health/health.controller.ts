@@ -30,13 +30,15 @@ export class HealthController {
     return this.healthCheckService.getHealthStatus();
   }
 
-  @Get(':vpsId')
-  @ApiOperation({ summary: 'Retorna o status de saúde de uma VPS específica' })
-  @ApiParam({ name: 'vpsId', description: 'UUID da VPS' })
-  @ApiResponse({ status: 200, description: 'Status da VPS' })
-  @ApiResponse({ status: 404, description: 'VPS não encontrada' })
-  getVpsHealth(@Param('vpsId') vpsId: string) {
-    return this.healthCheckService.getVpsHealthStatus(vpsId);
+  @Get(':providerId')
+  @ApiOperation({
+    summary: 'Retorna o status de saúde de um provider específico',
+  })
+  @ApiParam({ name: 'providerId', description: 'UUID do VpsProvider' })
+  @ApiResponse({ status: 200, description: 'Status do provider' })
+  @ApiResponse({ status: 404, description: 'Provider não encontrado' })
+  getVpsHealth(@Param('providerId') providerId: string) {
+    return this.healthCheckService.getVpsHealthStatus(providerId);
   }
 
   @Get('hub/metrics')

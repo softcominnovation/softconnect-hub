@@ -15,7 +15,7 @@ export interface AuthCachePayload {
   origins: string[];
   hubRelay: boolean;
   adapterType: string;
-  vpsId: string | null;
+  vpsProviderId: string | null;
   batchWebhookEnabled: boolean;
   batchWebhookUrl: string | null;
 }
@@ -49,7 +49,7 @@ export class ApiKeyGuard implements CanActivate {
           origins: true,
           hubRelay: true,
           adapterType: true,
-          vpsId: true,
+          vpsProviderId: true,
           batchWebhookEnabled: true,
           batchWebhookUrl: true,
         },
@@ -64,7 +64,7 @@ export class ApiKeyGuard implements CanActivate {
         origins: product.origins,
         hubRelay: product.hubRelay,
         adapterType: product.adapterType,
-        vpsId: product.vpsId,
+        vpsProviderId: product.vpsProviderId,
         batchWebhookEnabled: product.batchWebhookEnabled,
         batchWebhookUrl: product.batchWebhookUrl,
       };

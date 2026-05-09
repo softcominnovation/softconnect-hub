@@ -38,11 +38,11 @@ export class UpdateProductDto {
   hubRelay?: boolean;
 
   @ApiProperty({
-    description: 'ID da VPS vinculada',
-    example: 'uuid-da-vps',
+    description: 'ID do VpsProvider vinculado',
+    example: 'uuid-do-provider',
     required: false,
   })
-  vpsId?: string;
+  vpsProviderId?: string;
 
   @ApiProperty({
     description: 'Ativa ou desativa o produto',

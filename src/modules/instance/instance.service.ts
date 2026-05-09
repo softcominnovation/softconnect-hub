@@ -39,26 +39,27 @@ export class InstanceService {
     product: AuthCachePayload,
     dto: CreateInstanceDto,
   ): Promise<InstanceCreatedDto & { id: string }> {
-    if (!product.vpsId) {
-      throw new BadRequestException('Produto sem VPS associada');
+    if (!product.vpsProviderId) {
+      throw new BadRequestException('Produto sem VpsProvider associado');
     }
 
-    const vps = await this.prisma.vpsServer.findUnique({
-      where: { id: product.vpsId, isActive: true },
+    const provider = await this.prisma.vpsProvider.findUnique({
+      where: { id: product.vpsProviderId, isActive: true },
     });
 
-    if (!vps) throw new NotFoundException('VPS não encontrada ou inativa');
+    if (!provider)
+      throw new NotFoundException('VpsProvider nao encontrado ou inativo');
 
-    if (vps.adapterType !== product.adapterType) {
+    if (provider.adapterType !== product.adapterType) {
       throw new BadRequestException(
-        `Incompatibilidade de adapter: produto usa "${product.adapterType}", VPS usa "${vps.adapterType}"`,
+        `Incompatibilidade de adapter: produto usa "${product.adapterType}", VPS usa "${provider.adapterType}"`,
       );
     }
 
     const ctx: ProviderContext = {
-      providerUrl: vps.providerUrl,
+      providerUrl: provider.providerUrl,
       providerApiKey: decryptAES256GCM(
-        vps.providerApiKey,
+        provider.providerApiKey,
         this.encryptionKeyHex,
       ),
     };
@@ -69,7 +70,7 @@ export class InstanceService {
     const instance = await this.prisma.instance.create({
       data: {
         productId: product.productId,
-        vpsId: vps.id,
+        vpsProviderId: provider.id,
         instanceName: dto.instanceName,
         providerInstanceId: result.instanceId ?? null,
         instanceToken: dto.token,
@@ -82,20 +83,21 @@ export class InstanceService {
   }
 
   async listInstances(product: AuthCachePayload): Promise<InstanceDto[]> {
-    if (!product.vpsId) {
-      throw new BadRequestException('Produto sem VPS associada');
+    if (!product.vpsProviderId) {
+      throw new BadRequestException('Produto sem VpsProvider associado');
     }
 
-    const vps = await this.prisma.vpsServer.findUnique({
-      where: { id: product.vpsId, isActive: true },
+    const provider = await this.prisma.vpsProvider.findUnique({
+      where: { id: product.vpsProviderId, isActive: true },
     });
 
-    if (!vps) throw new NotFoundException('VPS não encontrada ou inativa');
+    if (!provider)
+      throw new NotFoundException('VpsProvider nao encontrado ou inativo');
 
     const ctx: ProviderContext = {
-      providerUrl: vps.providerUrl,
+      providerUrl: provider.providerUrl,
       providerApiKey: decryptAES256GCM(
-        vps.providerApiKey,
+        provider.providerApiKey,
         this.encryptionKeyHex,
       ),
     };
@@ -191,7 +193,7 @@ export class InstanceService {
   ): Promise<void> {
     const instance = await this.prisma.instance.findFirst({
       where: { id: instanceId, productId: product.productId },
-      include: { vps: true, product: true },
+      include: { vpsProvider: true, product: true },
     });
 
     if (!instance) {
@@ -199,9 +201,9 @@ export class InstanceService {
     }
 
     const ctx: ProviderContext = {
-      providerUrl: instance.vps.providerUrl,
+      providerUrl: instance.vpsProvider.providerUrl,
       providerApiKey: decryptAES256GCM(
-        instance.vps.providerApiKey,
+        instance.vpsProvider.providerApiKey,
         this.encryptionKeyHex,
       ),
     };

@@ -29,7 +29,7 @@ describe('IpWhitelistGuard', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect(prisma.vpsServer.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { ip: '192.168.1.10', isActive: true },
+        where: { ip: '192.168.1.10', isActive: true, providers: { some: { isActive: true } } },
       }),
     );
   });
@@ -41,7 +41,7 @@ describe('IpWhitelistGuard', () => {
     await guard.canActivate(ctx);
 
     expect(prisma.vpsServer.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { ip: '10.0.0.1', isActive: true } }),
+      expect.objectContaining({ where: { ip: '10.0.0.1', isActive: true, providers: { some: { isActive: true } } } }),
     );
   });
 

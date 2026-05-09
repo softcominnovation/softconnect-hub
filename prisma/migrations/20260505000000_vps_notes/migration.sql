@@ -1,1 +1,0 @@
-ALTER TABLE "VpsServer" ADD COLUMN IF NOT EXISTS "notes" TEXT;

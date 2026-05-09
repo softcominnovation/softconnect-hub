@@ -23,7 +23,7 @@ const mockInstance = (overrides = {}) => ({
   instanceName: 'my-instance',
   productId: 'prod-1',
   isActive: true,
-  vps: mockVps,
+  vpsProvider: mockVps,
   ...overrides,
 });
 
