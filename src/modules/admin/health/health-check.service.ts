@@ -239,26 +239,31 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
     return results;
   }
 
-  async getVpsHealthStatus(providerId: string): Promise<ProviderHealthEntry> {
-    const cacheKey = `provider:health-detail:${providerId}`;
-    const cached = await this.cache.get<ProviderHealthEntry>(cacheKey);
+  async getVpsHealthStatus(vpsId: string): Promise<VpsHealthStatus> {
+    const cacheKey = `vps:health-detail:${vpsId}`;
+    const cached = await this.cache.get<VpsHealthStatus>(cacheKey);
     if (cached) return cached;
 
-    const provider = await this.prisma.vpsProvider.findFirst({
-      where: { id: providerId, isActive: true },
+    const vps = await this.prisma.vpsServer.findFirst({
+      where: { id: vpsId, isActive: true },
       include: {
-        healthChecks: {
-          orderBy: { checkedAt: 'desc' },
-          take: 1,
+        providers: {
+          where: { isActive: true },
+          include: {
+            healthChecks: {
+              orderBy: { checkedAt: 'desc' },
+              take: 1,
+            },
+          },
         },
       },
     });
 
-    if (!provider) {
-      throw new NotFoundException(`Provider ${providerId} nao encontrado`);
+    if (!vps) {
+      throw new NotFoundException(`VPS ${vpsId} nao encontrada`);
     }
 
-    const entry: ProviderHealthEntry = {
+    const providerEntries: ProviderHealthEntry[] = vps.providers.map((provider) => ({
       providerId: provider.id,
       label: provider.label,
       adapterType: provider.adapterType,
@@ -273,7 +278,42 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
             checkedAt: provider.healthChecks[0].checkedAt,
           }
         : null,
+    }));
+
+    const vpsIsHealthy = providerEntries.length === 0
+      ? true
+      : providerEntries.every((p) => p.isHealthy);
+
+    const allLastHealthAt = providerEntries
+      .map((p) => p.lastHealthAt)
+      .filter((d): d is Date => d !== null);
+    const vpsLastHealthAt = allLastHealthAt.length > 0
+      ? allLastHealthAt.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
+      : null;
+
+    const allLastChecks = providerEntries
+      .map((p) => p.lastCheck)
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+    const vpsLastCheck = allLastChecks.length > 0
+      ? allLastChecks.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime())[0]
+      : null;
+
+    const entry: VpsHealthStatus = {
+      vpsId: vps.id,
+      label: vps.label,
+      subdomain: vps.subdomain,
+      isHealthy: vpsIsHealthy,
+      lastHealthAt: vpsLastHealthAt,
+      lastCheck: vpsLastCheck,
+      providers: providerEntries,
     };
+
+    if (vps.monitorUrl) {
+      const metrics = await this.cache.get<Record<string, unknown>>(
+        `vps:metrics:${vps.id}`,
+      );
+      if (metrics) entry.systemMetrics = metrics;
+    }
 
     await this.cache.setWithTTL(cacheKey, entry, PROVIDER_HEALTH_DETAIL_TTL);
 

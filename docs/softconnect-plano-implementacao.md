@@ -286,7 +286,7 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 - [x] Atualizar `InstanceResolverService`: `ResolvedInstance.vpsId` → `vpsProviderId`; `include: { vpsProvider: true }` em vez de `vps`
 - [x] Atualizar `AdminInstancesService`: todas as referências `vps.providerUrl` → `vpsProvider.providerUrl`
 - [x] Atualizar `IpWhitelistGuard`: consulta `vpsProvider.findFirst` para validar IP do webhook interno
-- [x] Atualizar `HealthCheckService`: `runChecks()` itera `VpsProvider` (não `VpsServer`); `VpsHealthStatus` ganha campos `providerId`, `providerLabel`; chaves Redis: `provider:health:{id}` e `provider:health-detail:{id}`
+- [x] Atualizar `HealthCheckService`: `runChecks()` itera `VpsProvider` (não `VpsServer`); `VpsHealthStatus` ganha array aninhado `providers[]` (com seus respectivos dados individuais); chaves Redis atualizadas.
 
 ### 4.5.4 — Testes
 
@@ -306,8 +306,8 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 - [ ] Verificar que `GET /admin/products` retorna `vpsProviderId` (não `vpsId`)
 - [ ] Verificar que `POST /api/v1/instance/create` ainda funciona com produto vinculado a `VpsProvider`
 - [ ] Confirmar que Redis não tem entradas antigas de `auth:*` após flush
-- [ ] Confirmar que `GET /admin/health` retorna array por provider (com `providerId` e `providerLabel`)
-- [x] Renomear parâmetro `:vpsId` → `:providerId` em `health.controller.ts` (issue I-01)
+- [x] Confirmar que `GET /admin/health` retorna agrupado por VPS (com os status na raiz da VPS)
+- [x] Manter o parâmetro `:vpsId` em `health.controller.ts` para buscar detalhes detalhados da VPS (não usar providerId na rota de detalhes da VPS)
 - [ ] Atualizar `softconnect-spec-tecnica.md` com schema atualizado (issue I-03)
 
 ---
