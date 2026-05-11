@@ -1,9 +1,33 @@
 import {
   BadRequestException,
+  ConflictException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+
+function extractErrorDetail(err: unknown): string {
+  if (err instanceof HttpException) {
+    const response = err.getResponse();
+    if (typeof response === 'string') return response;
+    if (typeof response === 'object' && response !== null) {
+      const r = response as Record<string, unknown>;
+      const msg =
+        r['message'] ??
+        r['error'] ??
+        r['details'] ??
+        r['detail'] ??
+        r['reason'];
+      if (msg !== undefined) {
+        return typeof msg === 'string' ? msg : JSON.stringify(msg);
+      }
+      return JSON.stringify(response);
+    }
+  }
+  if (err instanceof Error) return err.message;
+  return JSON.stringify(err);
+}
 import { ConfigService } from '@nestjs/config';
 import { AuthCachePayload } from '../../auth/apikey.guard';
 import { decryptAES256GCM } from '../../common/crypto.util';
@@ -64,6 +88,35 @@ export class InstanceService {
       ),
     };
 
+    const existingInstance = await this.prisma.instance.findFirst({
+      where: { productId: product.productId, instanceName: dto.instanceName },
+    });
+
+    if (existingInstance) {
+      const adapter = this.adapterResolver.resolve(product.adapterType);
+      let existsInProvider = false;
+
+      try {
+        const providerInstances = await adapter.fetchInstances(ctx);
+        existsInProvider = providerInstances.some(
+          (i) => i.instanceName === dto.instanceName,
+        );
+      } catch {
+        existsInProvider = false;
+      }
+
+      if (existsInProvider) {
+        throw new ConflictException(
+          `Instância "${dto.instanceName}" já existe neste produto e no provider (id: ${existingInstance.id})`,
+        );
+      }
+
+      this.logger.warn(
+        `[createInstance] registro órfão encontrado no Hub (id=${existingInstance.id}) sem correspondência no provider — removendo e recriando`,
+      );
+      await this.prisma.instance.delete({ where: { id: existingInstance.id } });
+    }
+
     const adapter = this.adapterResolver.resolve(product.adapterType);
     const result = await adapter.createInstance(ctx, dto);
 
@@ -88,8 +141,15 @@ export class InstanceService {
     };
 
     if (adapter.applyInstanceDefaults) {
+      let defaultWebhook: Awaited<
+        ReturnType<typeof this.prisma.productDefaultWebhook.findUnique>
+      > | null = null;
+      let defaultProxy: Awaited<
+        ReturnType<typeof this.prisma.productDefaultProxy.findUnique>
+      > | null = null;
+
       try {
-        const [defaultWebhook, defaultProxy] = await Promise.all([
+        [defaultWebhook, defaultProxy] = await Promise.all([
           this.prisma.productDefaultWebhook.findUnique({
             where: { productId: product.productId },
           }),
@@ -97,10 +157,16 @@ export class InstanceService {
             where: { productId: product.productId },
           }),
         ]);
+      } catch (err) {
+        this.logger.warn(
+          `[createInstance] erro ao buscar defaults — prosseguindo sem aplicar: ${(err as Error).message}`,
+        );
+      }
 
-        const hasDefaults = defaultWebhook || defaultProxy;
+      const hasDefaults = defaultWebhook || defaultProxy;
 
-        if (hasDefaults) {
+      if (hasDefaults) {
+        try {
           const applied = await adapter.applyInstanceDefaults(
             ctx,
             dto.instanceName,
@@ -132,11 +198,32 @@ export class InstanceService {
 
           if (applied.webhook !== undefined) response.webhook = applied.webhook;
           if (applied.proxy !== undefined) response.proxy = applied.proxy;
+        } catch (err) {
+          const errMsg = extractErrorDetail(err);
+          const errFull =
+            err instanceof HttpException
+              ? JSON.stringify(err.getResponse())
+              : errMsg;
+          this.logger.error(
+            `[createInstance] falha ao aplicar defaults — iniciando rollback. productId=${product.productId} instanceName=${dto.instanceName}: ${errFull}`,
+          );
+
+          await this.prisma.instance.deleteMany({
+            where: { id: instance.id },
+          });
+
+          try {
+            await adapter.deleteInstance(ctx, dto.instanceName);
+          } catch (deleteErr) {
+            this.logger.warn(
+              `[createInstance] rollback: falha ao deletar instância do provider (pode precisar de limpeza manual): ${(deleteErr as Error).message}`,
+            );
+          }
+
+          throw new BadRequestException(
+            `Falha ao aplicar configurações padrão — operação revertida. Detalhe: ${errFull}`,
+          );
         }
-      } catch (err) {
-        this.logger.warn(
-          `[createInstance] falha ao aplicar defaults para productId=${product.productId} instanceName=${dto.instanceName}: ${(err as Error).message}`,
-        );
       }
     }
 
