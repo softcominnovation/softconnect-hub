@@ -49,7 +49,7 @@ export class WebhookService {
       : dto;
 
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.setWebhook(ctx, resolved.instanceName, effectiveDto);
+    await adapter.setWebhook(ctx, resolved.instanceName, effectiveDto);
   }
 
   async findWebhook(

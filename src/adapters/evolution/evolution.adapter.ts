@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  ApplyInstanceDefaultsResult,
   ChatDto,
   CheckNumberDto,
   CheckNumberResponseDto,
@@ -11,6 +12,8 @@ import {
   FindContactsDto,
   FindMessagesDto,
   InstanceCreatedDto,
+  InstanceDefaultProxyConfig,
+  InstanceDefaultWebhookConfig,
   InstanceDto,
   MessageDto,
   MessageResponseDto,
@@ -317,7 +320,7 @@ export class EvolutionAdapter implements WhatsAppProvider {
     ctx: ProviderContext,
     instanceName: string,
     dto: SetWebhookDto,
-  ): Promise<void> {
+  ): Promise<unknown> {
     const { byEvents, base64, ...rest } = dto.webhook;
     const payload = {
       webhook: {
@@ -326,14 +329,13 @@ export class EvolutionAdapter implements WhatsAppProvider {
         base64: base64 ?? true,
       },
     };
-    const response = await this.http.request<unknown>(
+    return this.http.request<unknown>(
       'post',
       ctx.providerUrl,
       ctx.providerApiKey,
       `/webhook/set/${instanceName}`,
       payload,
     );
-    void response;
   }
 
   findWebhook(ctx: ProviderContext, instanceName: string): Promise<WebhookDto> {
@@ -441,5 +443,46 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerApiKey,
       `/proxy/find/${instanceName}`,
     );
+  }
+
+  async applyInstanceDefaults(
+    ctx: ProviderContext,
+    instanceName: string,
+    defaults: {
+      webhook?: InstanceDefaultWebhookConfig;
+      proxy?: InstanceDefaultProxyConfig;
+    },
+  ): Promise<ApplyInstanceDefaultsResult> {
+    const result: ApplyInstanceDefaultsResult = {};
+
+    if (defaults.webhook) {
+      const { enabled, url, headers, byEvents, base64, events } =
+        defaults.webhook;
+      result.webhook = await this.setWebhook(ctx, instanceName, {
+        webhook: {
+          enabled: enabled ?? true,
+          url,
+          headers,
+          byEvents,
+          base64,
+          events,
+        },
+      });
+    }
+
+    if (defaults.proxy) {
+      const { enabled, host, port, protocol, username, password } =
+        defaults.proxy;
+      result.proxy = await this.setProxy(ctx, instanceName, {
+        enabled: enabled ?? true,
+        host,
+        port,
+        protocol: protocol as 'http' | 'https' | 'socks5',
+        username,
+        password,
+      });
+    }
+
+    return result;
   }
 }

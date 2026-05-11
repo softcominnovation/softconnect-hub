@@ -38,7 +38,7 @@ export class InstanceService {
   async createInstance(
     product: AuthCachePayload,
     dto: CreateInstanceDto,
-  ): Promise<InstanceCreatedDto & { id: string }> {
+  ): Promise<InstanceCreatedDto & { id: string } & Record<string, unknown>> {
     if (!product.vpsProviderId) {
       throw new BadRequestException('Produto sem VpsProvider associado');
     }
@@ -79,7 +79,68 @@ export class InstanceService {
       },
     });
 
-    return { ...result, id: instance.id };
+    const response: InstanceCreatedDto & { id: string } & Record<
+        string,
+        unknown
+      > = {
+      ...result,
+      id: instance.id,
+    };
+
+    if (adapter.applyInstanceDefaults) {
+      try {
+        const [defaultWebhook, defaultProxy] = await Promise.all([
+          this.prisma.productDefaultWebhook.findUnique({
+            where: { productId: product.productId },
+          }),
+          this.prisma.productDefaultProxy.findUnique({
+            where: { productId: product.productId },
+          }),
+        ]);
+
+        const hasDefaults = defaultWebhook || defaultProxy;
+
+        if (hasDefaults) {
+          const applied = await adapter.applyInstanceDefaults(
+            ctx,
+            dto.instanceName,
+            {
+              webhook: defaultWebhook
+                ? {
+                    enabled: defaultWebhook.enabled,
+                    url: defaultWebhook.url,
+                    headers: defaultWebhook.headers as
+                      | Record<string, string>
+                      | undefined,
+                    byEvents: defaultWebhook.byEvents,
+                    base64: defaultWebhook.base64,
+                    events: defaultWebhook.events,
+                  }
+                : undefined,
+              proxy: defaultProxy
+                ? {
+                    enabled: defaultProxy.enabled,
+                    host: defaultProxy.host,
+                    port: defaultProxy.port,
+                    protocol: defaultProxy.protocol,
+                    username: defaultProxy.username ?? undefined,
+                    password: defaultProxy.password ?? undefined,
+                  }
+                : undefined,
+            },
+          );
+
+          if (applied.webhook !== undefined) response.webhook = applied.webhook;
+          if (applied.proxy !== undefined) response.proxy = applied.proxy;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `[createInstance] falha ao aplicar defaults para productId=${product.productId} instanceName=${dto.instanceName}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return response;
   }
 
   async listInstances(product: AuthCachePayload): Promise<InstanceDto[]> {

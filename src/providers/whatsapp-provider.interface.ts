@@ -208,6 +208,31 @@ export interface SettingsDto {
   readStatus: boolean;
 }
 
+// --- Instance Defaults ---
+
+export interface InstanceDefaultWebhookConfig {
+  enabled?: boolean;
+  url: string;
+  headers?: Record<string, string>;
+  byEvents?: boolean;
+  base64?: boolean;
+  events?: string[];
+}
+
+export interface InstanceDefaultProxyConfig {
+  enabled?: boolean;
+  host: string;
+  port: string;
+  protocol: string;
+  username?: string;
+  password?: string;
+}
+
+export interface ApplyInstanceDefaultsResult {
+  webhook?: unknown;
+  proxy?: unknown;
+}
+
 // --- Proxy DTOs ---
 
 export interface SetProxyDto {
@@ -307,7 +332,7 @@ export interface WhatsAppProvider {
     ctx: ProviderContext,
     instanceName: string,
     dto: SetWebhookDto,
-  ): Promise<void>;
+  ): Promise<unknown>;
   findWebhook(ctx: ProviderContext, instanceName: string): Promise<WebhookDto>;
   toggleWebhook(
     ctx: ProviderContext,
@@ -331,4 +356,13 @@ export interface WhatsAppProvider {
     dto: SetProxyDto,
   ): Promise<ProxyDto>;
   findProxy(ctx: ProviderContext, instanceName: string): Promise<ProxyDto>;
+
+  applyInstanceDefaults?(
+    ctx: ProviderContext,
+    instanceName: string,
+    defaults: {
+      webhook?: InstanceDefaultWebhookConfig;
+      proxy?: InstanceDefaultProxyConfig;
+    },
+  ): Promise<ApplyInstanceDefaultsResult>;
 }

@@ -43,6 +43,7 @@
 | **VPS `notes` field** — campo de anotações livres na VpsServer | ✅ **Implementado — schema, migration, DTOs, service — 118/118 testes** |
 | Passos 7 em diante | 🔒 Bloqueados até aprovação do Passo 6.5 |
 | **Passo 7.5** — Batch Webhook Notification | ✅ **Implementado — 118/118 testes — Aguardando gate de validação** |
+| **Instance Defaults** — Webhook e Proxy padrão por produto (Evolution) | ✅ **Implementado — schema, migration, DTOs, admin endpoints, adapter, instance service — build limpo** |
 
 ---
 

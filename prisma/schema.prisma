@@ -22,11 +22,43 @@ model Product {
   updatedAt           DateTime @updatedAt
 
   vpsProviderId  String?
-  vpsProvider    VpsProvider?    @relation(fields: [vpsProviderId], references: [id])
+  vpsProvider    VpsProvider?         @relation(fields: [vpsProviderId], references: [id])
   instances      Instance[]
   webhookConfigs WebhookConfig[]
   auditLogs      AuditLog[]
   batchJobs      BatchJob[]
+  defaultWebhook ProductDefaultWebhook?
+  defaultProxy   ProductDefaultProxy?
+}
+
+model ProductDefaultWebhook {
+  id        String   @id @default(uuid())
+  productId String   @unique
+  enabled   Boolean  @default(true)
+  url       String
+  headers   Json?
+  byEvents  Boolean  @default(false)
+  base64    Boolean  @default(false)
+  events    String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model ProductDefaultProxy {
+  id        String   @id @default(uuid())
+  productId String   @unique
+  enabled   Boolean  @default(true)
+  host      String
+  port      String
+  protocol  String
+  username  String?
+  password  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
 }
 
 model VpsServer {

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Product, WebhookConfig } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { CacheService } from '../../../cache/cache.service';
 import {
@@ -26,6 +27,10 @@ import {
   SyncRelayResultDto,
   ToggleWebhookBulkResultDto,
 } from './dto/webhook-config.dto';
+import {
+  SetInstanceDefaultProxyDto,
+  SetInstanceDefaultWebhookDto,
+} from './dto/instance-defaults.dto';
 
 type SafeProduct = Omit<Product, 'apiKeyHash'>;
 
@@ -443,5 +448,100 @@ export class ProductsService {
   async getWebhookConfig(productId: string): Promise<WebhookConfig | null> {
     await this.assertExists(productId);
     return this.prisma.webhookConfig.findFirst({ where: { productId } });
+  }
+
+  async setInstanceDefaultWebhook(
+    productId: string,
+    dto: SetInstanceDefaultWebhookDto,
+  ) {
+    await this.assertExists(productId);
+    const headersValue = dto.headers
+      ? (dto.headers as Prisma.InputJsonValue)
+      : Prisma.JsonNull;
+    return this.prisma.productDefaultWebhook.upsert({
+      where: { productId },
+      update: {
+        enabled: dto.enabled ?? true,
+        url: dto.url,
+        headers: headersValue,
+        byEvents: dto.byEvents ?? false,
+        base64: dto.base64 ?? false,
+        events: dto.events ?? [],
+      },
+      create: {
+        productId,
+        enabled: dto.enabled ?? true,
+        url: dto.url,
+        headers: headersValue,
+        byEvents: dto.byEvents ?? false,
+        base64: dto.base64 ?? false,
+        events: dto.events ?? [],
+      },
+    });
+  }
+
+  async getInstanceDefaultWebhook(productId: string) {
+    await this.assertExists(productId);
+    return this.prisma.productDefaultWebhook.findUnique({
+      where: { productId },
+    });
+  }
+
+  async deleteInstanceDefaultWebhook(productId: string): Promise<void> {
+    await this.assertExists(productId);
+    const existing = await this.prisma.productDefaultWebhook.findUnique({
+      where: { productId },
+    });
+    if (!existing)
+      throw new NotFoundException(
+        'Configuração de webhook padrão não encontrada',
+      );
+    await this.prisma.productDefaultWebhook.delete({ where: { productId } });
+  }
+
+  async setInstanceDefaultProxy(
+    productId: string,
+    dto: SetInstanceDefaultProxyDto,
+  ) {
+    await this.assertExists(productId);
+    return this.prisma.productDefaultProxy.upsert({
+      where: { productId },
+      update: {
+        enabled: dto.enabled ?? true,
+        host: dto.host,
+        port: dto.port,
+        protocol: dto.protocol,
+        username: dto.username ?? null,
+        password: dto.password ?? null,
+      },
+      create: {
+        productId,
+        enabled: dto.enabled ?? true,
+        host: dto.host,
+        port: dto.port,
+        protocol: dto.protocol,
+        username: dto.username ?? null,
+        password: dto.password ?? null,
+      },
+    });
+  }
+
+  async getInstanceDefaultProxy(productId: string) {
+    await this.assertExists(productId);
+    return this.prisma.productDefaultProxy.findUnique({
+      where: { productId },
+    });
+  }
+
+  async deleteInstanceDefaultProxy(productId: string): Promise<void> {
+    await this.assertExists(productId);
+    const existing = await this.prisma.productDefaultProxy.findUnique({
+      where: { productId },
+    });
+    if (!existing)
+      throw new NotFoundException(
+        'Configuração de proxy padrão não encontrada',
+      );
+    await this.prisma.productDefaultProxy.delete({ where: { productId } });
   }
 }

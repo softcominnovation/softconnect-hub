@@ -9,6 +9,10 @@ export class AppController {
       version: '2.0.0',
       status: 'online',
       provider: 'Multi-Adapter Node (Evolution, Meta, etc)',
+      docs: {
+        admin: '/docs/admin',
+        data: '/docs/data',
+      },
     };
   }
 

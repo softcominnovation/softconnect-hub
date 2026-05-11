@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Put,
@@ -27,6 +29,12 @@ import {
   ToggleWebhookBulkResultDto,
   WebhookConfigResponseDto,
 } from './dto/webhook-config.dto';
+import {
+  InstanceDefaultProxyResponseDto,
+  InstanceDefaultWebhookResponseDto,
+  SetInstanceDefaultProxyDto,
+  SetInstanceDefaultWebhookDto,
+} from './dto/instance-defaults.dto';
 import { ProductsService } from './products.service';
 
 @ApiTags('Admin — Products')
@@ -184,5 +192,94 @@ export class ProductsController {
       dto.enabled,
       dto.instanceId,
     );
+  }
+
+  @Put(':id/instance-defaults/webhook')
+  @ApiOperation({
+    summary: 'Define o webhook padrão aplicado ao criar novas instâncias (Evolution)',
+    description:
+      'Quando preenchido, toda nova instância criada via Evolution terá o webhook configurado automaticamente. ' +
+      'Campos não informados usam o valor padrão. A configuração é por produto.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiBody({ type: SetInstanceDefaultWebhookDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Webhook padrão salvo',
+    type: InstanceDefaultWebhookResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  setInstanceDefaultWebhook(
+    @Param('id') id: string,
+    @Body() dto: SetInstanceDefaultWebhookDto,
+  ) {
+    return this.productsService.setInstanceDefaultWebhook(id, dto);
+  }
+
+  @Get(':id/instance-defaults/webhook')
+  @ApiOperation({ summary: 'Consulta o webhook padrão de instâncias do produto' })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiResponse({
+    status: 200,
+    description: 'Webhook padrão atual ou null',
+    type: InstanceDefaultWebhookResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  getInstanceDefaultWebhook(@Param('id') id: string) {
+    return this.productsService.getInstanceDefaultWebhook(id);
+  }
+
+  @Delete(':id/instance-defaults/webhook')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remove o webhook padrão de instâncias do produto' })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiResponse({ status: 204, description: 'Webhook padrão removido' })
+  @ApiResponse({ status: 404, description: 'Produto ou configuração não encontrado' })
+  deleteInstanceDefaultWebhook(@Param('id') id: string) {
+    return this.productsService.deleteInstanceDefaultWebhook(id);
+  }
+
+  @Put(':id/instance-defaults/proxy')
+  @ApiOperation({
+    summary: 'Define o proxy padrão aplicado ao criar novas instâncias (Evolution)',
+    description:
+      'Quando preenchido, toda nova instância criada via Evolution terá o proxy configurado automaticamente.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiBody({ type: SetInstanceDefaultProxyDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Proxy padrão salvo',
+    type: InstanceDefaultProxyResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  setInstanceDefaultProxy(
+    @Param('id') id: string,
+    @Body() dto: SetInstanceDefaultProxyDto,
+  ) {
+    return this.productsService.setInstanceDefaultProxy(id, dto);
+  }
+
+  @Get(':id/instance-defaults/proxy')
+  @ApiOperation({ summary: 'Consulta o proxy padrão de instâncias do produto' })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiResponse({
+    status: 200,
+    description: 'Proxy padrão atual ou null',
+    type: InstanceDefaultProxyResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
+  getInstanceDefaultProxy(@Param('id') id: string) {
+    return this.productsService.getInstanceDefaultProxy(id);
+  }
+
+  @Delete(':id/instance-defaults/proxy')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remove o proxy padrão de instâncias do produto' })
+  @ApiParam({ name: 'id', description: 'UUID do produto' })
+  @ApiResponse({ status: 204, description: 'Proxy padrão removido' })
+  @ApiResponse({ status: 404, description: 'Produto ou configuração não encontrado' })
+  deleteInstanceDefaultProxy(@Param('id') id: string) {
+    return this.productsService.deleteInstanceDefaultProxy(id);
   }
 }
