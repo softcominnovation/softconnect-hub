@@ -675,21 +675,19 @@ Imports de dentro de `src/common/` para outros módulos **não mudam** — `comm
 - [x] Variáveis: mesmas do `softconnect` exceto `RUNTIME_MODE=worker-batch`, sem Traefik labels
 - [x] `docker-compose.dev.yaml` com override para modo de desenvolvimento do worker
 
-### Fase 3 — Limpeza (Bloqueada — requer validação em produção)
+### Fase 3 — Limpeza
 
-> **🔒 Não iniciar Fase 3 sem validação de que o worker-batch está estabilizado em produção.**
-
-- [ ] Remover `BatchWorker` e `BatchWebhookWorker` do `QueueModule` no `AppModule`
-- [ ] Verificar que `InternalWebhookModule` substituiu completamente o controller no `QueueModule`
-- [ ] Garantir que `RELAY_CONCURRENCY` está sendo usado pelo `RelayWorker` que permanece na API
+- [x] Remover `BatchWorker` e `BatchWebhookWorker` do `QueueModule` no `AppModule`
+- [x] Verificar que `InternalWebhookModule` substituiu completamente o controller no `QueueModule`
+- [x] Garantir que `RELAY_CONCURRENCY` está sendo usado pelo `RelayWorker` que permanece na API
 
 ### ✅ Validação do Desenvolvedor — Passo 6.6
 
-- [ ] Confirmar que `npm run build` compila sem erros (dois entrypoints: `main.js` e `main-worker-batch.js`)
-- [ ] Confirmar que a API sobe normalmente: `RUNTIME_MODE=api` no log de startup
-- [ ] Confirmar que o worker sobe sem porta HTTP: `RUNTIME_MODE=worker-batch`, sem mensagem de `Listening on`
-- [ ] Confirmar que `docker compose up` sobe ambos os serviços (api + worker)
-- [ ] Confirmar que jobs de batch são processados corretamente pelo worker dedicado
+- [x] Confirmar que `npm run build` compila sem erros (dois entrypoints: `main.js` e `main-worker-batch.js`)
+- [x] Confirmar que a API sobe normalmente: `RUNTIME_MODE=api` no log de startup
+- [x] Confirmar que o worker sobe sem porta HTTP: `RUNTIME_MODE=worker-batch`, sem mensagem de `Listening on`
+- [x] Confirmar que `docker compose up` sobe ambos os serviços (api + worker)
+- [x] Confirmar que jobs de batch são processados corretamente pelo worker dedicado
 
 ---
 
