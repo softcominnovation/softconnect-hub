@@ -47,122 +47,111 @@ Cada produto define qual adapter usar (`adapterType`). O Hub seleciona o adapter
 
 ## 3. Estrutura de Pastas
 
+> A separação de workers introduziu dois entrypoints e um módulo raiz extra. Arquivos raiz de `src/` são: `main.ts` (API), `main-worker-batch.ts` (worker), `app.module.ts`, `batch-worker.module.ts`, `app.controller.ts` e `app.service.ts`.
+
 ```
 src/
-├── main.ts
-├── app.module.ts
+├── main.ts                       # Bootstrap da API (HTTP, Fastify, Swagger)
+├── main-worker-batch.ts          # Bootstrap do worker de lotes (sem HTTP, createApplicationContext)
+├── app.module.ts                 # Módulo raiz da API
+├── batch-worker.module.ts        # Módulo raiz do worker (CoreModule + BatchWorkerQueueModule)
+├── app.controller.ts
+├── app.service.ts
+│
+├── core/
+│   └── core.module.ts            # Re-exporta AppConfigModule, PrismaModule, CacheModule,
+│                               #   ProviderModule, AdaptersModule para uso pelo worker
+│
+├── common/
+│   ├── redis.util.ts             # parseRedisConnection(config) — compartilhado API e worker
+│   ├── crypto.util.ts
+│   ├── decorators/
+│   │   └── product.decorator.ts
+│   ├── filters/
+│   │   └── http-exception.filter.ts
+│   └── interceptors/
+│       └── timeout.interceptor.ts
 │
 ├── config/
 │   ├── config.module.ts
-│   └── config.schema.ts          # validação zod no startup — app não sobe sem vars corretas
+│   └── config.schema.ts          # Zod schema — app não sobe com var obrigatória ausente
 │
 ├── providers/
 │   ├── whatsapp-provider.interface.ts   # CONTRATO — todos os adapters implementam isso
 │   ├── adapter-registry.service.ts      # registry de adapters por type (Map em memória)
-│   ├── adapter-resolver.service.ts      # resolve adapter com base no adapterType do produto
+│   ├── adapter-resolver.service.ts
 │   └── provider.module.ts
 │
 ├── adapters/
 │   ├── evolution/
 │   │   ├── evolution.adapter.ts         # implementa WhatsAppProvider
-│   │   ├── evolution.http.ts            # cliente axios com keep-alive e circuit breaker
+│   │   ├── evolution.http.ts            # Axios com keep-alive e circuit breaker
 │   │   └── evolution.module.ts
-│   ├── meta-cloud/                      # FUTURO — implementa WhatsAppProvider
-│   │   ├── meta-cloud.adapter.ts
-│   │   ├── meta-cloud.http.ts
-│   │   └── meta-cloud.module.ts
-│   └── adapters.module.ts              # registra todos os adapters no registry no startup
+│   └── adapters.module.ts           # registra adapters no registry no startup
 │
 ├── auth/
-│   ├── apikey.guard.ts                  # Data Plane — valida apikey via Redis
-│   ├── jwt.guard.ts                     # Admin Plane — valida JWT
-│   ├── ip-whitelist.guard.ts            # /internal/webhook — valida IP da VPS
+│   ├── apikey.guard.ts
+│   ├── jwt.guard.ts
+│   ├── ip-whitelist.guard.ts
+│   ├── rate-limit.guard.ts
 │   └── auth.module.ts
 │
 ├── cache/
-│   ├── cache.service.ts                 # abstração ioredis com TTL helpers
+│   ├── cache.service.ts
 │   └── cache.module.ts
 │
+├── prisma/
+│   ├── prisma.service.ts
+│   └── prisma.module.ts
+│
 ├── resolver/
-│   ├── instance.resolver.ts             # resolveById(productId, instanceId) → ResolvedInstance (hot path); resolve(productId, instanceName) para createInstance
+│   ├── instance.resolver.ts         # resolveById(productId, instanceId) → ResolvedInstance
 │   └── resolver.module.ts
 │
-├── admin/
-│   ├── products/
-│   │   ├── products.controller.ts
-│   │   ├── products.service.ts
-│   │   └── products.module.ts
-│   └── vps/
-│       ├── vps.controller.ts
-│       ├── vps.service.ts
-│       └── vps.module.ts
-│
-├── instance/
-│   ├── instance.controller.ts
-│   ├── instance.service.ts             # orquestra: adapter resolver + banco + cache invalidation
-│   └── instance.module.ts
-│
-├── message/
-│   ├── message.controller.ts
-│   ├── message.service.ts
-│   ├── batch/
-│   │   ├── batch.producer.ts           # publica jobs no BullMQ com batchJobId no payload
-│   │   ├── batch.worker.ts             # consome jobs, chama adapter dinâmico, UPDATE final no Postgres
-│   │   └── batch.module.ts
-│   └── message.module.ts
-│
-├── chat/
-│   ├── chat.controller.ts
-│   ├── chat.service.ts
-│   └── chat.module.ts
-│
-├── webhook/
-│   ├── webhook.controller.ts           # set, find, toggle — repassa para provider via adapter
-│   ├── internal-webhook.controller.ts  # recebe eventos do provider (IP whitelist)
-│   ├── relay/
-│   │   ├── relay.producer.ts           # publica job de repasse no BullMQ (hub_relay)
-│   │   ├── relay.worker.ts             # assina HMAC-SHA256 e entrega ao produto
-│   │   └── relay.module.ts
-│   ├── webhook.service.ts
-│   └── webhook.module.ts
-│
-├── settings/
-│   ├── settings.controller.ts          # POST set/:instance, GET find/:instance
-│   ├── settings.service.ts
-│   ├── dto/settings.dto.ts
-│   └── settings.module.ts
-│
-├── proxy/
-│   ├── proxy.controller.ts             # POST set/:instance, GET find/:instance
-│   ├── proxy.service.ts
-│   ├── dto/proxy.dto.ts
-│   └── proxy.module.ts
-│
-├── health/
-│   ├── health.service.ts               # CRON 60s + atualiza Redis e Postgres
-│   └── health.module.ts
-│
 ├── audit/
-│   ├── audit.interceptor.ts            # captura request/response — dispara sem await
-│   ├── audit.service.ts                # buffer write-behind — flush 1s ou 100 registros
+│   ├── audit.interceptor.ts
+│   ├── audit.service.ts             # buffer write-behind — flush 1s ou 100 registros
 │   └── audit.module.ts
 │
-└── common/
-    ├── interceptors/
-    │   └── timeout.interceptor.ts
-    ├── filters/
-    │   └── http-exception.filter.ts
-    └── decorators/
-        ├── product.decorator.ts              # extrai productId do request após auth
-        └── resolved-instance.decorator.ts   # extrai dados resolvidos (inclui adapterType)
+└── modules/
+    ├── admin/
+    │   ├── activity/
+    │   ├── adapters/
+    │   ├── auth/
+    │   ├── dashboard-auth/
+    │   ├── health/                    # HealthCheckService — CRON 60s
+    │   ├── instances/
+    │   ├── logs/
+    │   ├── products/
+    │   ├── users/
+    │   └── vps/                       # VpsServer + VpsProvider CRUD
+    ├── batch-worker/
+    │   └── batch-worker-queue.module.ts  # Módulo independente do worker: instancia
+    │                                   #   BatchWorker + BatchWebhookWorker sem importar QueueModule
+    ├── chat/
+    ├── instance/
+    ├── message/
+    ├── proxy/
+    ├── queue/
+    │   ├── batch.producer.ts          # Publica jobs no BullMQ (permanece na API)
+    │   ├── batch.worker.ts            # Consome BATCH_QUEUE (roda na API e no worker)
+    │   ├── batch-webhook.worker.ts    # Consome BATCH_WEBHOOK_QUEUE (idem)
+    │   ├── relay.worker.ts            # Consome RELAY_QUEUE (permanece na API)
+    │   ├── internal-webhook.controller.ts
+    │   └── queue.module.ts
+    ├── settings/
+    └── webhook/
+        ├── internal-webhook.module.ts # Hospeda InternalWebhookController (extraido do QueueModule)
+        └── ... (webhook.controller.ts, webhook.service.ts, webhook.module.ts)
 ```
 
 ---
 
 ## 4. Schema do Banco (Prisma) — Estado Definitivo
 
-> **Todas as 7 tabelas estão criadas, migrations aplicadas e Prisma Client gerado.**
-> A migration consolidada `20260416170815_init_complete` está ativa.
+> **8 tabelas. Migrações ativas:**
+> - `20260508000000_init_multi_provider` — schema completo com arquitetura multi-provider (VpsProvider separado de VpsServer)
+> - `20260511000000_product_instance_defaults` — campos de webhook/proxy padrão por produto + `batchWebhookEnabled`
 
 ```prisma
 model Product {
@@ -170,38 +159,68 @@ model Product {
   name        String
   slug        String   @unique
   apiKeyHash  String   @unique        // SHA-256 one-way — nunca armazenar a key crua
-  adapterType String   @default("evolution")
   origins     String[]               // ["n8n", "frontend", "backend"]
   hubRelay    Boolean  @default(false)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  vpsId          String?
-  vps            VpsServer?      @relation(fields: [vpsId], references: [id])
+  // Referência ao endpoint de provider (não à máquina)
+  vpsProviderId String?
+  vpsProvider   VpsProvider? @relation(fields: [vpsProviderId], references: [id])
+
+  // Batch webhook notification
+  batchWebhookEnabled Boolean @default(false)
+  batchWebhookUrl     String?
+
+  // Defaults aplicados automaticamente ao criar instâncias (Evolution)
+  instanceDefaultWebhookUrl     String?
+  instanceDefaultWebhookEnabled Boolean @default(false)
+  instanceDefaultWebhookEvents  String[]
+  instanceDefaultProxyEnabled   Boolean @default(false)
+  instanceDefaultProxyHost      String?
+  instanceDefaultProxyPort      String?
+  instanceDefaultProxyProtocol  String?
+  instanceDefaultProxyUsername  String?
+  instanceDefaultProxyPassword  String?
+
   instances      Instance[]
   webhookConfigs WebhookConfig[]
   auditLogs      AuditLog[]
   batchJobs      BatchJob[]
+  adminUsers     AdminUser[]
 }
 
 model VpsServer {
-  id             String    @id @default(uuid())
-  label          String                   // "VPS-BR-01"
-  subdomain      String    @unique        // "evo1.softcomia.com"
-  ip             String                   // IP para whitelist do webhook interno
-  providerUrl    String                   // URL base do provider nesta VPS
-  providerApiKey String                   // AES-256-GCM encrypted
-  adapterType    String    @default("evolution")
-  managerType    String?                  // "portainer" | "coolify"
-  managerUrl     String?
-  managerApiKey  String?                  // AES-256-GCM encrypted
-  isHealthy      Boolean   @default(true)
-  lastHealthAt   DateTime?
-  isActive       Boolean   @default(true)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id           String    @id @default(uuid())
+  label        String
+  subdomain    String    @unique
+  ip           String
+  managerType  String?   // "portainer" | "coolify"
+  managerUrl   String?
+  managerApiKey String?  // AES-256-GCM encrypted
+  notes        String?   // Anotações livres (markdown)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
+  providers VpsProvider[]
+}
+
+model VpsProvider {
+  id            String    @id @default(uuid())
+  vpsId         String
+  label         String                   // "Evolution API porta 8080"
+  providerUrl   String                   // URL base do adapter nesta VPS
+  providerApiKey String                  // AES-256-GCM encrypted
+  adapterType   String    @default("evolution")
+  isActive      Boolean   @default(true)
+  isHealthy     Boolean   @default(true)
+  lastHealthAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  vps          VpsServer    @relation(fields: [vpsId], references: [id])
   products     Product[]
   instances    Instance[]
   healthChecks HealthCheck[]
@@ -210,7 +229,7 @@ model VpsServer {
 model Instance {
   id            String   @id @default(uuid())
   productId     String
-  vpsId         String
+  vpsProviderId String
   instanceName  String
   instanceToken String?
   hubToken      String   @unique
@@ -220,13 +239,13 @@ model Instance {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  product   Product    @relation(fields: [productId], references: [id])
-  vps       VpsServer  @relation(fields: [vpsId], references: [id])
-  auditLogs AuditLog[]
-  batchJobs BatchJob[]
+  product     Product     @relation(fields: [productId], references: [id])
+  vpsProvider VpsProvider @relation(fields: [vpsProviderId], references: [id])
+  auditLogs   AuditLog[]
+  batchJobs   BatchJob[]
 
-  @@unique([vpsId, instanceName])
-  @@unique([productId, instanceName])    // unicidade de nome por produto — suporta cenário futuro de multi-VPS por produto
+  @@unique([vpsProviderId, instanceName])
+  @@unique([productId, instanceName])    // unicidade por produto — suporta multi-VPS futuro
 }
 
 model WebhookConfig {
@@ -259,14 +278,14 @@ model AuditLog {
 }
 
 model HealthCheck {
-  id         String   @id @default(uuid())
-  vpsId      String
-  status     String               // "healthy" | "unhealthy" | "timeout"
-  responseMs Int
-  errorMsg   String?
-  checkedAt  DateTime @default(now())
+  id            String   @id @default(uuid())
+  vpsProviderId String
+  status        String               // "healthy" | "unhealthy" | "timeout"
+  responseMs    Int
+  errorMsg      String?
+  checkedAt     DateTime @default(now())
 
-  vps VpsServer @relation(fields: [vpsId], references: [id])
+  vpsProvider VpsProvider @relation(fields: [vpsProviderId], references: [id])
 }
 
 model BatchJob {
@@ -274,16 +293,21 @@ model BatchJob {
   productId     String
   instanceId    String?              // instância que disparou o lote
   totalMessages Int                  // definido ao criar o lote
-  sentCount     Int       @default(0)   // preenchido pelo worker ao final do lote
-  failedCount   Int       @default(0)   // preenchido pelo worker ao final do lote
+  sentCount     Int       @default(0)
+  failedCount   Int       @default(0)
   status        String    @default("processing")  // "processing"|"completed"|"failed"
-  completedAt   DateTime?            // preenchido quando o lote encerra
+  completedAt   DateTime?
   createdAt     DateTime  @default(now())
 
   product  Product   @relation(fields: [productId], references: [id])
   instance Instance? @relation(fields: [instanceId], references: [id])
 }
 ```
+  latencyMs  Int
+  origin     String?
+  ip         String
+  errorMsg   String?
+  createdAt  DateTime @default(now())
 
 ### Decisão arquitetural — BatchJob (Event-Driven Aggregation)
 
@@ -352,11 +376,12 @@ O `adapterType` trafega junto com dados **já cacheados no Redis**. Custo adicio
 
 ```
 auth:{apiKeyHash}
-  → { productId, isActive, origins[], hubRelay, adapterType, vpsId }
+  → { productId, isActive, origins[], hubRelay, vpsProviderId,
+      batchWebhookEnabled, batchWebhookUrl, apiKeyHash }
   → TTL: 60s
 
-instance:{productId}:{instanceName}
-  → { providerUrl, providerApiKey, vpsId, instanceId, adapterType }
+instance:{instanceId}
+  → { providerUrl, providerApiKey, vpsProviderId, instanceId, instanceName, adapterType }
   → TTL: 300s (5min)
 ```
 
@@ -704,6 +729,17 @@ AUDIT_FLUSH_BATCH_SIZE=100    # ou a cada 100 registros (o que ocorrer primeiro)
 # Adapter
 DEFAULT_ADAPTER_TYPE=evolution  # fallback se produto não tiver adapterType definido
 
+# Runtime do processo
+RUNTIME_MODE=api                # 'api' | 'worker-batch' — identifica o processo nos logs
+
+# Concorrência dos workers de fila
+WORKER_CONCURRENCY=10           # jobs de batch processados em paralelo pelo BatchWorker
+RELAY_CONCURRENCY=20            # eventos de relay processados em paralelo pelo RelayWorker
+
+# Admin bootstrap (criado uma vez)
+ALLOW_BOOTSTRAP=false           # 'true' permite criar o primeiro AdminUser via endpoint
+ADMIN_SECRET=                   # Bearer secret para o endpoint de bootstrap
+
 # Debug
 CACHE_DEBUG=false  # quando true, loga HIT/MISS do cache de instância no hot path com elapsed time
 ```
@@ -767,7 +803,8 @@ Hub recebe evento do provider → responde 200 imediatamente → worker repassa 
 | Portainer | 0.25 | 256M | 0.05 | 128M |
 | PostgreSQL | 1.0 | 2G | 0.25 | 512M |
 | Redis | 0.50 | 512M | 0.10 | 128M |
-| SoftConnect (app) | 2.0 | 1G | 0.50 | 256M |
+| SoftConnect (api) | 1.5 | 768M | 0.50 | 256M |
+| SoftConnect (worker) | 0.50 | 256M | 0.10 | 64M |
 
 Consumo estimado em operação normal: **4GB a 6GB RAM**. Margem de ~10GB para crescimento e picos.
 
@@ -879,8 +916,15 @@ Em caso de problema em produção:
 | TOTP apenas no Admin Plane | 2FA no Data Plane | 500 req/s com TOTP = gargalo imediato. Data Plane protegido por apikey via Redis. |
 | Nomes de endpoint idênticos à Evolution API | Nomenclatura própria | Trocar de provider deve ser transparente para o cliente — apenas muda a base URL. |
 | VPS 4 vCPU / 16GB RAM | 2 vCPU / 8GB (apertado) ou 8 vCPU / 32GB (prematuro) | Folga real para crescimento. Escala horizontal com Swarm quando necessário. |
+| **Dois entrypoints, mesma imagem Docker** | Processo único com workers embutidos | `createApplicationContext` no worker — sem porta HTTP aberta. Isola recursos de CPU/RAM dos workers de lote dos da API HTTP. Escalonamento independente sem duplicar imagem ou pipeline CI/CD. |
+| **`BatchWorkerQueueModule` independente do `QueueModule`** | Extrair workers do `QueueModule` existente | Zero modificações em arquivos existentes na Fase 1 da separação. Worker instancia diretamente `BatchWorker` e `BatchWebhookWorker` via factory providers próprios — sem dependência do `AuthModule` nem de controllers. |
+| **`CoreModule` apenas para o worker** | Worker importa cada módulo individualmente | Simplifica `BatchWorkerAppModule` sem alterar `AppModule`. `CoreModule` reexporta exatamente o que o worker precisa (Config, Prisma, Cache, Provider, Adapters). |
+| **`parseRedisConnection` centralizado em `common/redis.util.ts`** | Função duplicada em cada worker | Elimina quatro cópias idênticas da função. Única fonte de verdade para parsing de `REDIS_URL`. |
+| **`RUNTIME_MODE` como variável de ambiente** | Detectar modo por env `npm run start:*` | Identifica o runtime (`api` ou `worker-batch`) nos logs sem lógica condicional no código. Validado pelo Zod no startup. |
+| **`VpsProvider` como entidade separada de `VpsServer`** | Campos de provider direto em `VpsServer` | Uma VPS física pode hospedar N providers independentes (Evolution na porta 8080, Z-API na 9000). Sem `VpsProvider`, cada provider exigiria uma entrada de `VpsServer` duplicada. FK `vpsProviderId` em `Product` e `Instance` aponta diretamente ao endpoint — sem join extra no hot path. |
+| **`InternalWebhookModule` separado do `QueueModule`** | `InternalWebhookController` dentro do `QueueModule` | Remove dependência do `AuthModule` no `QueueModule`. Worker de batch não carrega controller HTTP nem guards de autenticação desnecessários. |
 | **Data plane usa `:instanceId` (UUID) como parâmetro de rota** | `:instanceName` (string do provider) | UUID é globalmente único, desacopla API pública do naming do provider, REST-correto. Tradução para `instanceName` é feita internamente pelo resolver — adapters não percebem a mudança. |
-| **`@@unique([productId, instanceName])` no model Instance** | Apenas `@@unique([vpsId, instanceName])` | Fecha gap de unicidade: impede nomes iguais no mesmo produto em VPSes diferentes. Forward-compatible com cenário futuro de multi-VPS por produto. As duas constraints coexistem e garantem dimensões distintas de unicidade. |
+| **`@@unique([productId, instanceName])` no model Instance** | Apenas `@@unique([vpsProviderId, instanceName])` | Fecha gap de unicidade: impede nomes iguais no mesmo produto em VPSes diferentes. Forward-compatible com cenário futuro de multi-VPS por produto. As duas constraints coexistem e garantem dimensões distintas de unicidade. |
 | **Cache key `instance:{uuid}`** | `instance:{productId}:{instanceName}` composta | Chave simples, imutável, derivada diretamente do parâmetro de rota. Zero composição necessária no hot path. |
 | **`resolveById(productId, instanceId)` com `productId` no where** | Busca apenas por `instanceId` | Isola instâncias entre produtos — cliente autenticado não pode acessar UUID de instância de outro produto. O `productId` vem do token, nunca do request body. |
 | **`/instance/:id/connect` em vez de `/qrcode`** | Endpoint `/qrcode` separado | A Evolution retorna QR code ou `state:open` no mesmo endpoint dependendo do estado — resposta polimórfica. Nome `/connect` é correto semanticamente para adapters futuros que não usam QR. |

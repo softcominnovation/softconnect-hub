@@ -38,6 +38,7 @@
 | **Passo 5.6** — Migração para ID-Based Routing no Data Plane | ✅ **Implementado — aguardando gate de validação** |
 | **Passo 6** — Filas Assíncronas & Envio em Lote (BullMQ) | ✅ **100% Concluído — Gate de validação aprovado** |
 | **Passo 6.5** — Reorganização de Módulos (`src/modules/`) | ✅ **Implementado — build limpo, 98/98 testes — Aguardando gate de validação** |
+| **Passo 6.6** — Separação de Workers de Batch (Fase 1 + Fase 2) | ✅ **Implementado — Aguardando gate de validação** |
 | **Migration consolidada** — `20260428000000_consolidated_schema` | ✅ **Implementado — migration única consolidada com IF NOT EXISTS** |
 | **Import Evolution → Hub** — endpoints de migração de instâncias | ✅ **Implementado — `POST .../import` e `POST .../import/bulk`** |
 | **VPS `notes` field** — campo de anotações livres na VpsServer | ✅ **Implementado — schema, migration, DTOs, service — 118/118 testes** |
@@ -644,6 +645,51 @@ Imports de dentro de `src/common/` para outros módulos **não mudam** — `comm
 - [x] Confirmar que a aplicação sobe localmente sem erros (`npm run start:dev`)
 - [x] Confirmar que todos os testes continuam passando após a reorganização
 - [x] Confirmar que nenhum endpoint mudou (contrato de API 100% preservado)
+
+---
+
+## Passo 6.6: Separação Incremental de Workers de Batch
+
+*Objetivo: Mover `BatchWorker` e `BatchWebhookWorker` para um processo dedicado sem HTTP, mantendo escalabilidade independente da API. Zero modificações nos arquivos já existentes.*
+
+> **Abordagem de duas fases:**
+> - **Fase 1:** Novos arquivos apenas. `AppModule` não é alterado. Workers de batch continuam rodando em ambos os processos.
+> - **Fase 2:** Docker Compose atualizado com serviço worker. Mesma imagem, entrypoint diferente (`main-worker-batch.js`).
+> - **Fase 3 (bloqueada):** Remover `BatchWorker`/`BatchWebhookWorker` do `AppModule` após validação em produção.
+
+### Fase 1 — Novos arquivos (zero modificações em existentes)
+
+- [x] Criar `src/common/redis.util.ts` — `parseRedisConnection(config)` centralizado
+- [x] Criar `src/modules/batch-worker/batch-worker-queue.module.ts` — instancia `BatchWorker` e `BatchWebhookWorker` com factory providers próprios
+- [x] Criar `src/modules/webhook/internal-webhook.module.ts` — extrai `InternalWebhookController` do `QueueModule` com `AuthModule`
+- [x] Criar `src/core/core.module.ts` — re-exporta `AppConfigModule`, `PrismaModule`, `CacheModule`, `ProviderModule`, `AdaptersModule`
+- [x] Criar `src/batch-worker.module.ts` — módulo raiz do worker: `imports: [CoreModule, BatchWorkerQueueModule]`
+- [x] Criar `src/main-worker-batch.ts` — bootstrap sem HTTP: `NestFactory.createApplicationContext(BatchWorkerAppModule)`
+- [x] Adicionar `RUNTIME_MODE`, `WORKER_CONCURRENCY`, `RELAY_CONCURRENCY` ao `config.schema.ts`
+- [x] Adicionar log do `RUNTIME_MODE` no `main.ts` (`SoftConnect iniciando [runtime: api]`)
+
+### Fase 2 — Container dedicado
+
+- [x] Atualizar `docker-compose.yaml` com serviço `softconnect-worker` usando a mesma imagem
+- [x] Entrypoint do worker: `node dist/main-worker-batch.js`
+- [x] Variáveis: mesmas do `softconnect` exceto `RUNTIME_MODE=worker-batch`, sem Traefik labels
+- [x] `docker-compose.dev.yaml` com override para modo de desenvolvimento do worker
+
+### Fase 3 — Limpeza (Bloqueada — requer validação em produção)
+
+> **🔒 Não iniciar Fase 3 sem validação de que o worker-batch está estabilizado em produção.**
+
+- [ ] Remover `BatchWorker` e `BatchWebhookWorker` do `QueueModule` no `AppModule`
+- [ ] Verificar que `InternalWebhookModule` substituiu completamente o controller no `QueueModule`
+- [ ] Garantir que `RELAY_CONCURRENCY` está sendo usado pelo `RelayWorker` que permanece na API
+
+### ✅ Validação do Desenvolvedor — Passo 6.6
+
+- [ ] Confirmar que `npm run build` compila sem erros (dois entrypoints: `main.js` e `main-worker-batch.js`)
+- [ ] Confirmar que a API sobe normalmente: `RUNTIME_MODE=api` no log de startup
+- [ ] Confirmar que o worker sobe sem porta HTTP: `RUNTIME_MODE=worker-batch`, sem mensagem de `Listening on`
+- [ ] Confirmar que `docker compose up` sobe ambos os serviços (api + worker)
+- [ ] Confirmar que jobs de batch são processados corretamente pelo worker dedicado
 
 ---
 

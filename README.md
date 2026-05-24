@@ -57,6 +57,13 @@ AUDIT_FLUSH_BATCH_SIZE=100
 
 # Adapter padrão
 DEFAULT_ADAPTER_TYPE=evolution
+
+# Runtime (api | worker-batch)
+RUNTIME_MODE=api
+
+# Concorrência dos workers de fila
+WORKER_CONCURRENCY=10
+RELAY_CONCURRENCY=20
 ```
 
 ---
@@ -82,6 +89,9 @@ npx ts-node prisma/seed.ts
 
 # 5. Inicie em modo hot-reload
 npm run start:dev
+
+# (opcional) Inicie o worker de lotes em um terminal separado
+npm run start:dev -- --entryFile main-worker-batch
 ```
 
 ### Linux / macOS (bash)
@@ -101,6 +111,9 @@ npx ts-node prisma/seed.ts
 
 # 5. Inicie em modo hot-reload
 npm run start:dev
+
+# (opcional) Inicie o worker de lotes em um terminal separado
+npm run start:dev -- --entryFile main-worker-batch
 ```
 
 **Dados do seed de desenvolvimento:**
@@ -214,19 +227,22 @@ npm run build
 
 ---
 
-## Schema do banco (7 tabelas)
+## Schema do banco (8 tabelas)
 
 | Tabela | Finalidade |
 |---|---|
-| `Product` | Produtos clientes — apikey (hash), adapterType, vpsId |
-| `VpsServer` | Máquinas com provider — credenciais AES-256-GCM |
-| `Instance` | Instâncias WhatsApp vinculadas a produto + VPS |
+| `Product` | Produtos clientes — apikey (hash), adapterType, vpsProviderId |
+| `VpsServer` | Máquinas físicas — metadados, IP, manager |
+| `VpsProvider` | Endpoint de API por VPS — providerUrl, providerApiKey (AES-256-GCM), adapterType |
+| `Instance` | Instâncias WhatsApp vinculadas a produto + VpsProvider |
 | `WebhookConfig` | URL + secret HMAC + filtro de eventos por produto |
 | `AuditLog` | Log assíncrono de todas as requests |
-| `HealthCheck` | Histórico de health checks por VPS |
+| `HealthCheck` | Histórico de health checks por VpsProvider |
 | `BatchJob` | Histórico eterno de disparos em lote (billing) |
 
-Migration única aplicada: `20260416170815_init_complete`
+Migrações aplicadas:
+- `20260508000000_init_multi_provider` — schema completo com arquitetura multi-provider
+- `20260511000000_product_instance_defaults` — campos de webhook/proxy padrão por produto
 
 ---
 
@@ -235,19 +251,47 @@ Migration única aplicada: `20260416170815_init_complete`
 ```
 softconnect/
 ├── prisma/
-│   ├── schema.prisma          # Schema completo — 7 modelos
-│   ├── seed.ts                # Dados de desenvolvimento
+│   ├── schema.prisma                  # Schema completo — 8 modelos
+│   ├── seed.ts                        # Dados de desenvolvimento
 │   └── migrations/
-│       └── 20260416170815_init_complete/
-│           └── migration.sql  # Migration única com todo o schema
+│       ├── 20260508000000_init_multi_provider/
+│       └── 20260511000000_product_instance_defaults/
 ├── src/
-│   ├── main.ts
-│   ├── app.module.ts
+│   ├── main.ts                        # Entrypoint da API (HTTP)
+│   ├── main-worker-batch.ts           # Entrypoint do worker de lotes (sem HTTP)
+│   ├── app.module.ts                  # Módulo raiz da API
+│   ├── batch-worker.module.ts         # Módulo raiz do worker
 │   ├── app.controller.ts
-│   └── app.service.ts
-├── docker-compose.yaml        # Infra completa (Postgres + Redis + app)
-├── Dockerfile                 # Multi-stage build
-└── .env                       # Variáveis de ambiente (não comitar)
+│   ├── app.service.ts
+│   ├── core/
+│   │   └── core.module.ts             # Módulos de infra reexportados para o worker
+│   ├── common/
+│   │   ├── redis.util.ts              # parseRedisConnection — compartilhado API + worker
+│   │   ├── crypto.util.ts
+│   │   ├── decorators/
+│   │   ├── filters/
+│   │   └── interceptors/
+│   ├── adapters/                      # Registro de adapters (EvolutionAdapter)
+│   ├── audit/                         # AuditInterceptor + buffer write-behind
+│   ├── auth/                          # Guards: ApiKey, JWT, IpWhitelist, RateLimit
+│   ├── cache/                         # Abstração ioredis com helpers TTL
+│   ├── config/                        # ConfigModule + Zod schema
+│   ├── prisma/                        # PrismaModule + PrismaService
+│   ├── providers/                     # AdapterRegistry + AdapterResolver
+│   ├── resolver/                      # InstanceResolverService
+│   └── modules/
+│       ├── admin/                     # Admin Plane (products, vps, users, health, logs)
+│       ├── batch-worker/              # BatchWorkerQueueModule (processo worker)
+│       ├── chat/                      # Data Plane — chat
+│       ├── instance/                  # Data Plane — instâncias
+│       ├── message/                   # Data Plane — mensagens + batch
+│       ├── proxy/                     # Data Plane — proxy
+│       ├── queue/                     # BullMQ: BatchWorker, RelayWorker, BatchWebhookWorker
+│       ├── settings/                  # Data Plane — settings
+│       └── webhook/                   # Data Plane — webhook + relay
+├── docker-compose.yaml                # Infra completa (Postgres + Redis + app + worker)
+├── Dockerfile                         # Multi-stage build — mesmo artefato para API e worker
+└── .env                               # Variáveis de ambiente (não comitar)
 ```
 
 ---
