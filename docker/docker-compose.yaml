@@ -79,6 +79,7 @@ services:
       - REDIS_URL=redis://redis_prod:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_SECRET=${ADMIN_SECRET}
       - RUNTIME_MODE=worker-batch
       - WORKER_CONCURRENCY=10
       - DEFAULT_ADAPTER_TYPE=evolution
