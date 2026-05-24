@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { Worker } from 'bullmq';
 import { createHmac } from 'crypto';
 import axios from 'axios';
+import { parseRedisConnection } from '../../common/redis.util';
 
 export interface BatchWebhookJobPayload {
   batchWebhookUrl: string;
@@ -29,17 +30,7 @@ export class BatchWebhookWorker implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit() {
-    const raw = this.config.getOrThrow<string>('REDIS_URL');
-    const url = new URL(raw);
-    const connection = {
-      host: url.hostname,
-      port: parseInt(url.port || '6379'),
-      password: url.password || undefined,
-      db:
-        url.pathname && url.pathname !== '/'
-          ? parseInt(url.pathname.slice(1))
-          : 0,
-    };
+    const connection = parseRedisConnection(this.config);
 
     this.worker = new Worker(
       'batch-webhook',
@@ -52,6 +43,24 @@ export class BatchWebhookWorker implements OnModuleInit, OnModuleDestroy {
 
     this.worker.on('error', (err) => {
       this.logger.error(`BatchWebhookWorker error: ${String(err)}`);
+    });
+
+    this.worker.on('active', (job) => {
+      this.logger.log(
+        `Job ${job.id} | webhook batch ${job.data.batchJobId} → delivering`,
+      );
+    });
+
+    this.worker.on('completed', (job) => {
+      this.logger.log(
+        `Job ${job.id} | webhook batch ${job.data.batchJobId} → delivered`,
+      );
+    });
+
+    this.worker.on('failed', (job, err) => {
+      this.logger.error(
+        `Job ${job?.id} | webhook batch ${job?.data?.batchJobId} → failed — ${err.message}`,
+      );
     });
   }
 
@@ -84,7 +93,7 @@ export class BatchWebhookWorker implements OnModuleInit, OnModuleDestroy {
       });
     } catch (err) {
       this.logger.warn(
-        `BatchWebhookWorker: falha ao entregar webhook para ${payload.batchWebhookUrl} — ${err instanceof Error ? err.message : String(err)}`,
+        `BatchWebhookWorker: failed to deliver webhook to ${payload.batchWebhookUrl} — ${err instanceof Error ? err.message : String(err)}`,
       );
       throw err;
     }

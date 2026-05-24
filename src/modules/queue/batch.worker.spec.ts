@@ -72,6 +72,7 @@ describe('BatchWorker', () => {
           provide: ConfigService,
           useValue: {
             getOrThrow: jest.fn().mockReturnValue('redis://localhost:6379'),
+            get: jest.fn().mockReturnValue(10),
           },
         },
         { provide: PrismaService, useValue: prisma },

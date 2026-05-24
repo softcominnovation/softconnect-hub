@@ -29,6 +29,7 @@ import { QueueModule } from './modules/queue/queue.module';
 import { ResolverModule } from './resolver/resolver.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
+import { InternalWebhookModule } from './modules/webhook/internal-webhook.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { WebhookModule } from './modules/webhook/webhook.module';
     MessageModule,
     ChatModule,
     WebhookModule,
+    InternalWebhookModule,
     SettingsModule,
     ProxyModule,
     QueueModule,

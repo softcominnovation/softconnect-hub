@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue, Worker } from 'bullmq';
+import { parseRedisConnection } from '../../common/redis.util';
 import { CacheService } from '../../cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
@@ -29,17 +30,8 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    const raw = this.config.getOrThrow<string>('REDIS_URL');
-    const url = new URL(raw);
-    const connection = {
-      host: url.hostname,
-      port: parseInt(url.port || '6379'),
-      password: url.password || undefined,
-      db:
-        url.pathname && url.pathname !== '/'
-          ? parseInt(url.pathname.slice(1))
-          : 0,
-    };
+    const connection = parseRedisConnection(this.config);
+    const concurrency = this.config.get<number>('WORKER_CONCURRENCY') ?? 10;
 
     this.worker = new Worker(
       'batch',
@@ -75,35 +67,65 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
           throw err;
         } finally {
           if (payload.batchWebhookEnabled && payload.batchWebhookUrl) {
-            await this.batchWebhookQueue.add(
-              'notify',
-              {
-                batchWebhookUrl: payload.batchWebhookUrl,
-                apiKeyHash: payload.apiKeyHash,
-                batchJobId: payload.batchJobId,
-                productId: payload.productId,
-                instanceId: payload.instanceId,
-                success,
-                processedAt,
-                deliveryError,
-                messagePayload: payload.message as Record<string, unknown>,
-              } satisfies BatchWebhookJobPayload,
-              {
-                attempts: 3,
-                backoff: { type: 'exponential', delay: 1000 },
-                removeOnComplete: { count: 100 },
-                removeOnFail: false,
-              },
+            try {
+              await this.batchWebhookQueue.add(
+                'notify',
+                {
+                  batchWebhookUrl: payload.batchWebhookUrl,
+                  apiKeyHash: payload.apiKeyHash,
+                  batchJobId: payload.batchJobId,
+                  productId: payload.productId,
+                  instanceId: payload.instanceId,
+                  success,
+                  processedAt,
+                  deliveryError,
+                  messagePayload: payload.message as Record<string, unknown>,
+                } satisfies BatchWebhookJobPayload,
+                {
+                  attempts: 3,
+                  backoff: { type: 'exponential', delay: 1000 },
+                  removeOnComplete: { count: 100 },
+                  removeOnFail: false,
+                },
+              );
+            } catch (webhookErr) {
+              this.logger.error(
+                `[BatchWorker] failed to enqueue webhook notification for batch ${payload.batchJobId}: ${String(webhookErr)}`,
+              );
+            }
+          }
+          try {
+            await this.finalizeBatchIfDone(payload.batchJobId);
+          } catch (finalizeErr) {
+            this.logger.error(
+              `[BatchWorker] failed to finalize batch ${payload.batchJobId}: ${String(finalizeErr)}`,
             );
           }
-          await this.finalizeBatchIfDone(payload.batchJobId);
         }
       },
-      { connection },
+      { connection, concurrency },
     );
 
     this.worker.on('error', (err) => {
       this.logger.error(`BatchWorker error: ${String(err)}`);
+    });
+
+    this.worker.on('active', (job) => {
+      this.logger.log(`Job ${job.id} | batch ${job.data.batchJobId} → started`);
+    });
+
+    this.worker.on('completed', (job) => {
+      this.logger.log(`Job ${job.id} | batch ${job.data.batchJobId} → completed`);
+    });
+
+    this.worker.on('failed', (job, err) => {
+      this.logger.error(
+        `Job ${job?.id} | batch ${job?.data?.batchJobId} → failed — ${err.message}`,
+      );
+    });
+
+    this.worker.on('stalled', (jobId) => {
+      this.logger.warn(`Job ${jobId} → stalled — will be reprocessed`);
     });
   }
 

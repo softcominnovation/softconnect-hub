@@ -4,6 +4,7 @@ import {
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -87,8 +88,11 @@ async function bootstrap() {
   SwaggerModule.setup('docs/data', app, dataplaneDocument);
 
   const PORT = process.env.PORT || 3001;
+  const runtimeMode =
+    app.get(ConfigService).get<string>('RUNTIME_MODE') ?? 'api';
 
   await app.listen(PORT, '0.0.0.0');
+  console.log(`SoftConnect iniciando [runtime: ${runtimeMode}]`);
   console.log(`Softconnect API rodando em: http://127.0.0.1:${PORT}/api/v1`);
   console.log(
     `Swagger Admin API disponível em: http://127.0.0.1:${PORT}/docs/admin`,

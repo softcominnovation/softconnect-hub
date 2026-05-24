@@ -39,6 +39,9 @@ export const configSchema = z.object({
     .default(false),
   HUB_MONITOR_URL: z.string().url().optional(),
   HUB_MONITOR_API_KEY: z.string().optional(),
+  RUNTIME_MODE: z.enum(['api', 'worker-batch']).default('api'),
+  WORKER_CONCURRENCY: z.coerce.number().min(1).max(100).default(10),
+  RELAY_CONCURRENCY: z.coerce.number().min(1).max(100).default(20),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

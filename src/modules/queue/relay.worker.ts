@@ -11,6 +11,7 @@ import * as http from 'http';
 import * as https from 'https';
 import axios from 'axios';
 import { PrismaService } from '../../prisma/prisma.service';
+import { parseRedisConnection } from '../../common/redis.util';
 
 export interface RelayJobPayload {
   adapterType: string;
@@ -31,17 +32,8 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    const raw = this.config.getOrThrow<string>('REDIS_URL');
-    const url = new URL(raw);
-    const connection = {
-      host: url.hostname,
-      port: parseInt(url.port || '6379'),
-      password: url.password || undefined,
-      db:
-        url.pathname && url.pathname !== '/'
-          ? parseInt(url.pathname.slice(1))
-          : 0,
-    };
+    const connection = parseRedisConnection(this.config);
+    const concurrency = this.config.get<number>('RELAY_CONCURRENCY') ?? 20;
 
     this.worker = new Worker(
       'relay',
@@ -49,7 +41,7 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
         const payload = job.data as RelayJobPayload;
         await this.relay(payload);
       },
-      { connection, concurrency: 20 },
+      { connection, concurrency },
     );
 
     this.worker.on('error', (err) => {
@@ -74,7 +66,7 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
 
     if (!instance) {
       this.logger.warn(
-        `Relay: nenhuma instância encontrada para "${payload.instanceName}"`,
+        `Relay: no instance found for "${payload.instanceName}"`,
       );
       return;
     }
@@ -91,7 +83,7 @@ export class RelayWorker implements OnModuleInit, OnModuleDestroy {
 
     if (!webhookConfig) {
       this.logger.warn(
-        `Relay: nenhuma configuração de webhook para produto "${instance.productId}"`,
+        `Relay: no webhook config found for product "${instance.productId}"`,
       );
       return;
     }
