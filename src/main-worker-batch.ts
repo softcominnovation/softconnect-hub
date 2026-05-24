@@ -11,7 +11,9 @@ async function bootstrapWorker(): Promise<void> {
 
   app.enableShutdownHooks();
 
-  logger.log('Worker running — waiting for jobs [queues: batch, batch-webhook]');
+  logger.log(
+    'Worker running — waiting for jobs [queues: batch, batch-webhook]',
+  );
 }
 
 void bootstrapWorker();

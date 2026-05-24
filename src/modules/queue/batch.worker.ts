@@ -115,7 +115,9 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
     });
 
     this.worker.on('completed', (job) => {
-      this.logger.log(`Job ${job.id} | batch ${job.data.batchJobId} → completed`);
+      this.logger.log(
+        `Job ${job.id} | batch ${job.data.batchJobId} → completed`,
+      );
     });
 
     this.worker.on('failed', (job, err) => {
