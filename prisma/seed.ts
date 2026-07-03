@@ -56,6 +56,7 @@ async function main() {
   await prisma.webhookConfig.deleteMany();
   await prisma.instance.deleteMany();
   await prisma.product.deleteMany();
+  await prisma.vpsProvider.deleteMany();
   await prisma.vpsServer.deleteMany();
 
   // 2. Criptografa a API Key da VPS com AES-256-GCM
@@ -67,14 +68,23 @@ async function main() {
       label: vpsLabel,
       subdomain: vpsSubdomain,
       ip: vpsIp,
-      providerUrl: vpsUrl,
-      providerApiKey: encryptedVpsKey,
-      adapterType: 'evolution',
-      isHealthy: true,
       isActive: true,
     },
   });
   console.log(`✅ VPS Criada: ${vps.label}`);
+
+  // 3b. Cadastrando o VpsProvider associado à VPS
+  const vpsProvider = await prisma.vpsProvider.create({
+    data: {
+      vpsId: vps.id,
+      label: `${vpsLabel} — Provider Default`,
+      providerUrl: vpsUrl,
+      providerApiKey: encryptedVpsKey,
+      adapterType: 'evolution',
+      isActive: true,
+    },
+  });
+  console.log(`✅ VpsProvider Criado: ${vpsProvider.label}`);
 
   // 4. Cadastrando o Produto
   const productHash = hashSha256(productApiKey);
@@ -84,7 +94,7 @@ async function main() {
       name: productName,
       slug: productSlug,
       adapterType: 'evolution',
-      vpsId: vps.id,
+      vpsProviderId: vpsProvider.id,
       apiKeyHash: productHash,
       origins: ['frontend', 'cron-jobs'],
       hubRelay: false,

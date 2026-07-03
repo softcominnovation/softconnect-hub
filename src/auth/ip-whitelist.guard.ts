@@ -24,7 +24,11 @@ export class IpWhitelistGuard implements CanActivate {
       : (request.ip ?? '');
 
     const vps = await this.prisma.vpsServer.findFirst({
-      where: { ip: rawIp, isActive: true },
+      where: {
+        ip: rawIp,
+        isActive: true,
+        providers: { some: { isActive: true } },
+      },
       select: { id: true },
     });
 

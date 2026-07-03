@@ -8,66 +8,117 @@ datasource db {
 }
 
 model Product {
-  id          String   @id @default(uuid())
-  name        String
-  slug        String   @unique
-  apiKeyHash  String   @unique
-  adapterType String   @default("evolution")
-  origins     String[]
-  hubRelay    Boolean  @default(false)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  name                String
+  slug                String   @unique
+  apiKeyHash          String   @unique
+  adapterType         String   @default("evolution")
+  origins             String[]
+  hubRelay            Boolean  @default(false)
+  batchWebhookEnabled Boolean  @default(false)
+  batchWebhookUrl     String?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  vpsId          String?
-  vps            VpsServer?      @relation(fields: [vpsId], references: [id])
+  vpsProviderId  String?
+  vpsProvider    VpsProvider?         @relation(fields: [vpsProviderId], references: [id])
   instances      Instance[]
   webhookConfigs WebhookConfig[]
   auditLogs      AuditLog[]
   batchJobs      BatchJob[]
+  defaultWebhook ProductDefaultWebhook?
+  defaultProxy   ProductDefaultProxy?
+}
+
+model ProductDefaultWebhook {
+  id        String   @id @default(uuid())
+  productId String   @unique
+  enabled   Boolean  @default(true)
+  url       String
+  headers   Json?
+  byEvents  Boolean  @default(false)
+  base64    Boolean  @default(false)
+  events    String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model ProductDefaultProxy {
+  id        String   @id @default(uuid())
+  productId String   @unique
+  enabled   Boolean  @default(true)
+  host      String
+  port      String
+  protocol  String
+  username  String?
+  password  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
 }
 
 model VpsServer {
+  id            String    @id @default(uuid())
+  label         String
+  subdomain     String    @unique
+  ip            String
+  managerType   String?
+  managerUrl    String?
+  managerApiKey String?
+  monitorUrl    String?
+  monitorApiKey String?
+  notes         String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  providers VpsProvider[]
+}
+
+model VpsProvider {
   id             String    @id @default(uuid())
+  vpsId          String
   label          String
-  subdomain      String    @unique
-  ip             String
   providerUrl    String
   providerApiKey String
   adapterType    String    @default("evolution")
-  managerType    String?
-  managerUrl     String?
-  managerApiKey  String?
   isHealthy      Boolean   @default(true)
   lastHealthAt   DateTime?
   isActive       Boolean   @default(true)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  vps          VpsServer    @relation(fields: [vpsId], references: [id])
   products     Product[]
   instances    Instance[]
   healthChecks HealthCheck[]
 }
 
 model Instance {
-  id            String   @id @default(uuid())
-  productId     String
-  vpsId         String
-  instanceName  String
-  instanceToken String?
-  hubToken      String   @unique
-  phoneNumber   String?
-  status        String   @default("disconnected")
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  productId          String
+  vpsProviderId      String
+  instanceName       String
+  providerInstanceId String?
+  instanceToken      String?
+  hubToken           String   @unique
+  phoneNumber        String?
+  status             String   @default("disconnected")
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  product   Product    @relation(fields: [productId], references: [id])
-  vps       VpsServer  @relation(fields: [vpsId], references: [id])
-  auditLogs AuditLog[]
-  batchJobs BatchJob[]
+  product     Product     @relation(fields: [productId], references: [id])
+  vpsProvider VpsProvider @relation(fields: [vpsProviderId], references: [id])
+  auditLogs   AuditLog[]
+  batchJobs   BatchJob[]
 
-  @@unique([vpsId, instanceName])
+  @@unique([vpsProviderId, instanceName])
+  @@unique([productId, instanceName])
 }
 
 model WebhookConfig {
@@ -122,15 +173,16 @@ model AdminActivityLog {
 
   adminUser AdminUser @relation(fields: [adminUserId], references: [id])
 }
-model HealthCheck {
-  id         String   @id @default(uuid())
-  vpsId      String
-  status     String
-  responseMs Int
-  errorMsg   String?
-  checkedAt  DateTime @default(now())
 
-  vps VpsServer @relation(fields: [vpsId], references: [id])
+model HealthCheck {
+  id            String   @id @default(uuid())
+  vpsProviderId String
+  status        String
+  responseMs    Int
+  errorMsg      String?
+  checkedAt     DateTime @default(now())
+
+  vpsProvider VpsProvider @relation(fields: [vpsProviderId], references: [id])
 }
 
 model BatchJob {

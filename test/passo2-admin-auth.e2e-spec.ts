@@ -16,7 +16,7 @@ describe('Admin Auth (e2e)', () => {
     it('retorna JWT com secret correto', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/auth/login',
+        url: '/api/v1/admin/auth/login',
         payload: {
           secret: process.env.ADMIN_SECRET ?? 'minha-senha-admin-dev',
         },
@@ -32,7 +32,7 @@ describe('Admin Auth (e2e)', () => {
     it('retorna 401 com secret errado', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/auth/login',
+        url: '/api/v1/admin/auth/login',
         payload: { secret: 'senha-completamente-errada' },
       });
 
@@ -44,7 +44,7 @@ describe('Admin Auth (e2e)', () => {
     it('retorna 401 sem body', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/auth/login',
+        url: '/api/v1/admin/auth/login',
         payload: {},
       });
 

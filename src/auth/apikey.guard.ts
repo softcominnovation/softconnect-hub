@@ -10,11 +10,14 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface AuthCachePayload {
   productId: string;
+  apiKeyHash: string;
   isActive: boolean;
   origins: string[];
   hubRelay: boolean;
   adapterType: string;
-  vpsId: string | null;
+  vpsProviderId: string | null;
+  batchWebhookEnabled: boolean;
+  batchWebhookUrl: string | null;
 }
 
 @Injectable()
@@ -46,7 +49,9 @@ export class ApiKeyGuard implements CanActivate {
           origins: true,
           hubRelay: true,
           adapterType: true,
-          vpsId: true,
+          vpsProviderId: true,
+          batchWebhookEnabled: true,
+          batchWebhookUrl: true,
         },
       });
 
@@ -54,11 +59,14 @@ export class ApiKeyGuard implements CanActivate {
 
       payload = {
         productId: product.id,
+        apiKeyHash: hash,
         isActive: product.isActive,
         origins: product.origins,
         hubRelay: product.hubRelay,
         adapterType: product.adapterType,
-        vpsId: product.vpsId,
+        vpsProviderId: product.vpsProviderId,
+        batchWebhookEnabled: product.batchWebhookEnabled,
+        batchWebhookUrl: product.batchWebhookUrl,
       };
 
       await this.cache.setWithTTL(cacheKey, payload, 60);

@@ -20,7 +20,7 @@ describe('Admin Products (e2e)', () => {
     it('cria produto e retorna apiKey raw (única exibição)', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/products',
+        url: '/api/v1/admin/products',
         headers: { authorization: `Bearer ${token}` },
         payload: {
           name: 'E2E Produto Teste',
@@ -54,7 +54,7 @@ describe('Admin Products (e2e)', () => {
     it('retorna 401 sem JWT', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/products',
+        url: '/api/v1/admin/products',
         payload: { name: 'Sem Auth', slug: 'sem-auth' },
       });
       expect(res.statusCode).toBe(401);
@@ -63,7 +63,7 @@ describe('Admin Products (e2e)', () => {
     it('retorna 401 com JWT inválido', async () => {
       const res = await app.inject({
         method: 'POST',
-        url: '/admin/products',
+        url: '/api/v1/admin/products',
         headers: { authorization: 'Bearer token.invalido.aqui' },
         payload: { name: 'Inválido', slug: 'invalido' },
       });
@@ -75,7 +75,7 @@ describe('Admin Products (e2e)', () => {
     it('lista produtos sem expor apiKeyHash', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/admin/products',
+        url: '/api/v1/admin/products',
         headers: { authorization: `Bearer ${token}` },
       });
 
@@ -90,7 +90,7 @@ describe('Admin Products (e2e)', () => {
     });
 
     it('retorna 401 sem JWT', async () => {
-      const res = await app.inject({ method: 'GET', url: '/admin/products' });
+      const res = await app.inject({ method: 'GET', url: '/api/v1/admin/products' });
       expect(res.statusCode).toBe(401);
     });
   });
@@ -99,7 +99,7 @@ describe('Admin Products (e2e)', () => {
     it('atualiza produto com sucesso', async () => {
       const res = await app.inject({
         method: 'PUT',
-        url: `/admin/products/${createdProductId}`,
+        url: `/api/v1/admin/products/${createdProductId}`,
         headers: { authorization: `Bearer ${token}` },
         payload: {
           adapterType: 'meta-cloud',
@@ -116,7 +116,7 @@ describe('Admin Products (e2e)', () => {
     it('retorna 404 para id inexistente', async () => {
       const res = await app.inject({
         method: 'PUT',
-        url: '/admin/products/id-que-nao-existe',
+        url: '/api/v1/admin/products/id-que-nao-existe',
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'Qualquer' },
       });
@@ -128,7 +128,7 @@ describe('Admin Products (e2e)', () => {
     it('apikey do produto criado é válida no guard', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: '/admin/products',
+        url: '/api/v1/admin/products',
         headers: { apikey: createdApiKey },
       });
       expect(res.statusCode).toBe(401);
@@ -139,7 +139,7 @@ describe('Admin Products (e2e)', () => {
     it('desativa produto com sucesso', async () => {
       const res = await app.inject({
         method: 'DELETE',
-        url: `/admin/products/${createdProductId}`,
+        url: `/api/v1/admin/products/${createdProductId}`,
         headers: { authorization: `Bearer ${token}` },
       });
 
