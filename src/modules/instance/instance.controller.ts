@@ -7,12 +7,14 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBody,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiSecurity,
   ApiTags,
@@ -41,13 +43,22 @@ export class InstanceController {
 
   @Get('list')
   @ApiOperation({ summary: 'Listar instâncias do produto' })
+  @ApiQuery({
+    name: 'instance_name',
+    required: false,
+    description:
+      'Filtro opcional por pedaço do nome da instância (case-insensitive)',
+  })
   @ApiResponse({
     status: 200,
     description:
       'Objeto do provider com hubId injetado em cada instância do produto',
   })
-  list(@Product() product: AuthCachePayload) {
-    return this.service.listInstances(product);
+  list(
+    @Product() product: AuthCachePayload,
+    @Query('instance_name') instanceName?: string,
+  ) {
+    return this.service.listInstances(product, instanceName);
   }
 
   @Get(':instanceId')

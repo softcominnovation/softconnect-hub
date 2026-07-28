@@ -232,7 +232,10 @@ export class InstanceService {
     return response;
   }
 
-  async listInstances(product: AuthCachePayload): Promise<InstanceDto[]> {
+  async listInstances(
+    product: AuthCachePayload,
+    instanceNameFilter?: string,
+  ): Promise<InstanceDto[]> {
     if (!product.vpsProviderId) {
       throw new BadRequestException('Produto sem VpsProvider associado');
     }
@@ -253,10 +256,22 @@ export class InstanceService {
     };
 
     const adapter = this.adapterResolver.resolve(product.adapterType);
+    const nameFilter = instanceNameFilter?.trim() || undefined;
 
     const [hubInstances, providerInstances] = await Promise.all([
       this.prisma.instance.findMany({
-        where: { productId: product.productId, isActive: true },
+        where: {
+          productId: product.productId,
+          isActive: true,
+          ...(nameFilter
+            ? {
+                instanceName: {
+                  contains: nameFilter,
+                  mode: 'insensitive' as const,
+                },
+              }
+            : {}),
+        },
         orderBy: { createdAt: 'desc' },
       }),
       adapter.fetchInstances(ctx),

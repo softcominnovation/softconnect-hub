@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -14,6 +15,7 @@ import {
   ApiBody,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -52,13 +54,22 @@ export class AdminInstancesController {
   @Get()
   @ApiOperation({ summary: 'Listar instâncias de um produto' })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
+  @ApiQuery({
+    name: 'instance_name',
+    required: false,
+    description:
+      'Filtro opcional por pedaço do nome da instância (case-insensitive)',
+  })
   @ApiResponse({ status: 200, description: 'Lista de instâncias' })
   @ApiResponse({
     status: 404,
     description: 'Produto não encontrado',
   })
-  list(@Param('productId') productId: string) {
-    return this.service.listInstances(productId);
+  list(
+    @Param('productId') productId: string,
+    @Query('instance_name') instanceName?: string,
+  ) {
+    return this.service.listInstances(productId, instanceName);
   }
 
   @Get('hub')
