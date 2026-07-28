@@ -31,7 +31,11 @@ describe('BatchWorker', () => {
   let adapterResolver: { resolve: jest.Mock };
   let batchWebhookQueue: { add: jest.Mock; close: jest.Mock };
 
-  const mockAdapter = { sendText: jest.fn() };
+  const mockAdapter = {
+    sendText: jest.fn(),
+    sendMedia: jest.fn(),
+    sendDocument: jest.fn(),
+  };
 
   const basePayload = {
     batchJobId: 'job-1',
@@ -42,6 +46,7 @@ describe('BatchWorker', () => {
     instanceName: 'my-instance',
     providerUrl: 'http://evolution.local:8080',
     providerApiKey: 'key',
+    messageType: 'text' as const,
     message: { number: '5511999990001', text: 'Olá' },
     batchWebhookEnabled: false,
     batchWebhookUrl: null,
@@ -88,6 +93,12 @@ describe('BatchWorker', () => {
 
     mockAdapter.sendText.mockResolvedValue({
       key: { id: 'msg-1', remoteJid: '5511@s.whatsapp.net', fromMe: true },
+    });
+    mockAdapter.sendMedia.mockResolvedValue({
+      key: { id: 'msg-2', remoteJid: '5511@s.whatsapp.net', fromMe: true },
+    });
+    mockAdapter.sendDocument.mockResolvedValue({
+      key: { id: 'msg-3', remoteJid: '5511@s.whatsapp.net', fromMe: true },
     });
     (prisma.batchJob.update as jest.Mock).mockResolvedValue({});
     batchWebhookQueue.add.mockResolvedValue({});
@@ -211,5 +222,57 @@ describe('BatchWorker', () => {
     await getProcessor()({ data: basePayload });
 
     expect(batchWebhookQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('deve chamar sendDocument quando messageType=document', async () => {
+    const docMessage = {
+      number: '5511999990001',
+      media: 'https://example.com/file.pdf',
+      fileName: 'file.pdf',
+    };
+    cache.increment.mockResolvedValue(1);
+    cache.get.mockResolvedValue(null);
+
+    await getProcessor()({
+      data: {
+        ...basePayload,
+        messageType: 'document',
+        message: docMessage,
+      },
+    });
+
+    expect(mockAdapter.sendDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ providerUrl: basePayload.providerUrl }),
+      'my-instance',
+      docMessage,
+    );
+    expect(mockAdapter.sendText).not.toHaveBeenCalled();
+    expect(mockAdapter.sendMedia).not.toHaveBeenCalled();
+  });
+
+  it('deve chamar sendMedia quando messageType=media', async () => {
+    const mediaMessage = {
+      number: '5511999990001',
+      mediatype: 'image' as const,
+      media: 'https://example.com/img.jpg',
+    };
+    cache.increment.mockResolvedValue(1);
+    cache.get.mockResolvedValue(null);
+
+    await getProcessor()({
+      data: {
+        ...basePayload,
+        messageType: 'media',
+        message: mediaMessage,
+      },
+    });
+
+    expect(mockAdapter.sendMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ providerUrl: basePayload.providerUrl }),
+      'my-instance',
+      mediaMessage,
+    );
+    expect(mockAdapter.sendText).not.toHaveBeenCalled();
+    expect(mockAdapter.sendDocument).not.toHaveBeenCalled();
   });
 });

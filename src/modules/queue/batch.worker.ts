@@ -48,11 +48,28 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
         const processedAt = new Date().toISOString();
 
         try {
-          await adapter.sendText(
-            ctx,
-            payload.instanceName,
-            payload.message as Parameters<typeof adapter.sendText>[2],
-          );
+          // Jobs antigos na fila podem não ter messageType — default text
+          const messageType = payload.messageType ?? 'text';
+
+          if (messageType === 'media') {
+            await adapter.sendMedia(
+              ctx,
+              payload.instanceName,
+              payload.message as Parameters<typeof adapter.sendMedia>[2],
+            );
+          } else if (messageType === 'document') {
+            await adapter.sendDocument(
+              ctx,
+              payload.instanceName,
+              payload.message as Parameters<typeof adapter.sendDocument>[2],
+            );
+          } else {
+            await adapter.sendText(
+              ctx,
+              payload.instanceName,
+              payload.message as Parameters<typeof adapter.sendText>[2],
+            );
+          }
           await this.cache.increment(`batch:sent:${payload.batchJobId}`);
         } catch (err) {
           success = false;

@@ -15,6 +15,7 @@ type FakeJob = {
     instanceName: string;
     providerUrl: string;
     providerApiKey: string;
+    messageType: 'text' | 'media' | 'document';
     message: SendTextDto;
     batchWebhookEnabled: boolean;
     batchWebhookUrl: string | null;
@@ -53,6 +54,7 @@ describe('BatchProducer', () => {
       providerUrl,
       providerApiKey,
       messages,
+      'text',
       delayMs,
     );
   }
@@ -140,6 +142,7 @@ describe('BatchProducer', () => {
       providerUrl,
       providerApiKey,
       messages,
+      'text',
       undefined,
       true,
       'https://cliente.example.com/callback',
@@ -152,6 +155,26 @@ describe('BatchProducer', () => {
         'https://cliente.example.com/callback',
       );
     });
+  });
+
+  it('deve gravar messageType=document e job name sendDocument', async () => {
+    await producer.addJobs(
+      batchJobId,
+      productId,
+      apiKeyHash,
+      instanceId,
+      adapterType,
+      instanceName,
+      providerUrl,
+      providerApiKey,
+      [{ number: '5511999990001', media: 'https://x/a.pdf', fileName: 'a.pdf' }],
+      'document',
+    );
+
+    const jobs = getCapturedJobs();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].name).toBe('sendDocument');
+    expect(jobs[0].data.messageType).toBe('document');
   });
 
   it('deve usar batchWebhookEnabled=false e batchWebhookUrl=null por padrão', async () => {

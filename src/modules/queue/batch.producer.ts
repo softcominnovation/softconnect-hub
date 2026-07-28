@@ -3,6 +3,8 @@ import { Queue } from 'bullmq';
 import { CacheService } from '../../cache/cache.service';
 import { BATCH_QUEUE } from './queue.constants';
 
+export type BatchMessageType = 'text' | 'media' | 'document';
+
 export interface BatchJobPayload {
   batchJobId: string;
   productId: string;
@@ -12,6 +14,7 @@ export interface BatchJobPayload {
   instanceName: string;
   providerUrl: string;
   providerApiKey: string;
+  messageType: BatchMessageType;
   message: unknown;
   batchWebhookEnabled: boolean;
   batchWebhookUrl: string | null;
@@ -34,6 +37,7 @@ export class BatchProducer implements OnModuleDestroy {
     providerUrl: string,
     providerApiKey: string,
     messages: unknown[],
+    messageType: BatchMessageType = 'text',
     delayMs?: number,
     batchWebhookEnabled = false,
     batchWebhookUrl: string | null = null,
@@ -44,8 +48,15 @@ export class BatchProducer implements OnModuleDestroy {
       86400,
     );
 
+    const jobName =
+      messageType === 'media'
+        ? 'sendMedia'
+        : messageType === 'document'
+          ? 'sendDocument'
+          : 'sendText';
+
     const jobs = messages.map((message, index) => ({
-      name: 'sendText',
+      name: jobName,
       data: {
         batchJobId,
         productId,
@@ -55,6 +66,7 @@ export class BatchProducer implements OnModuleDestroy {
         instanceName,
         providerUrl,
         providerApiKey,
+        messageType,
         message,
         batchWebhookEnabled,
         batchWebhookUrl,
