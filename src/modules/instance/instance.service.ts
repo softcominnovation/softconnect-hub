@@ -309,9 +309,10 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     const raw = await adapter.fetchInstance(ctx, resolved.instanceName);
+    const payload = Array.isArray(raw) ? (raw[0] ?? {}) : raw;
 
     return {
-      ...raw,
+      ...payload,
       hubId: resolved.instanceId,
     } as InstanceDto;
   }
