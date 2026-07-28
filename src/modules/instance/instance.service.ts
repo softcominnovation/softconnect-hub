@@ -62,7 +62,12 @@ export class InstanceService {
   async createInstance(
     product: AuthCachePayload,
     dto: CreateInstanceDto,
-  ): Promise<InstanceCreatedDto & { id: string } & Record<string, unknown>> {
+  ): Promise<
+    InstanceCreatedDto & {
+      id: string;
+      providerInstanceId: string | null;
+    } & Record<string, unknown>
+  > {
     if (!product.vpsProviderId) {
       throw new BadRequestException('Produto sem VpsProvider associado');
     }
@@ -132,12 +137,13 @@ export class InstanceService {
       },
     });
 
-    const response: InstanceCreatedDto & { id: string } & Record<
-        string,
-        unknown
-      > = {
+    const response: InstanceCreatedDto & {
+      id: string;
+      providerInstanceId: string | null;
+    } & Record<string, unknown> = {
       ...result,
       id: instance.id,
+      providerInstanceId: instance.providerInstanceId,
     };
 
     if (adapter.applyInstanceDefaults) {
@@ -251,7 +257,43 @@ export class InstanceService {
     };
 
     const adapter = this.adapterResolver.resolve(product.adapterType);
-    return adapter.fetchInstances(ctx);
+
+    const [hubInstances, providerInstances] = await Promise.all([
+      this.prisma.instance.findMany({
+        where: { productId: product.productId, isActive: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      adapter.fetchInstances(ctx),
+    ]);
+
+    const byProviderId = new Map<string, InstanceDto>();
+    const byName = new Map<string, InstanceDto>();
+    for (const pi of providerInstances) {
+      const providerId = pi.id ?? pi.instanceId;
+      if (providerId) byProviderId.set(providerId, pi);
+      if (pi.instanceName) byName.set(pi.instanceName, pi);
+    }
+
+    return hubInstances.map((hub) => {
+      const providerMatch =
+        (hub.providerInstanceId
+          ? byProviderId.get(hub.providerInstanceId)
+          : undefined) ?? byName.get(hub.instanceName);
+
+      const providerInstanceId =
+        hub.providerInstanceId ??
+        providerMatch?.id ??
+        providerMatch?.instanceId ??
+        null;
+
+      return {
+        ...(providerMatch ?? {}),
+        id: hub.id,
+        providerInstanceId,
+        instanceName: hub.instanceName,
+        status: providerMatch?.status ?? hub.status,
+      } as InstanceDto;
+    });
   }
 
   async fetchInstance(
@@ -267,7 +309,20 @@ export class InstanceService {
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.fetchInstance(ctx, resolved.instanceName);
+    const raw = await adapter.fetchInstance(ctx, resolved.instanceName);
+
+    const hub = await this.prisma.instance.findFirst({
+      where: { id: resolved.instanceId, productId: product.productId },
+      select: { id: true, providerInstanceId: true, instanceName: true },
+    });
+
+    return {
+      ...raw,
+      id: resolved.instanceId,
+      providerInstanceId:
+        hub?.providerInstanceId ?? raw.id ?? raw.instanceId ?? null,
+      instanceName: resolved.instanceName,
+    };
   }
 
   async connectInstance(
@@ -332,7 +387,7 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     await adapter.logoutInstance(ctx, resolved.instanceName);
-    await this.cache.del(`instance:${instanceId}`);
+    await this.cache.del(`instance:${resolved.instanceId}`);
   }
 
   async deleteInstance(
@@ -340,7 +395,10 @@ export class InstanceService {
     instanceId: string,
   ): Promise<void> {
     const instance = await this.prisma.instance.findFirst({
-      where: { id: instanceId, productId: product.productId },
+      where: {
+        productId: product.productId,
+        OR: [{ id: instanceId }, { providerInstanceId: instanceId }],
+      },
       include: { vpsProvider: true, product: true },
     });
 
@@ -361,18 +419,21 @@ export class InstanceService {
       await adapter.deleteInstance(ctx, instance.instanceName);
     } catch (err) {
       this.logger.warn(
-        `[delete] provider error for instanceId=${instanceId} — continuing with DB soft-delete. error=${(err as Error).message}`,
+        `[delete] provider error for instanceId=${instance.id} — continuing with DB soft-delete. error=${(err as Error).message}`,
       );
     }
 
     const deleted = await this.prisma.instance.deleteMany({
-      where: { id: instanceId, productId: product.productId },
+      where: { id: instance.id, productId: product.productId },
     });
 
     this.logger.log(
-      `[delete] instanceId=${instanceId} productId=${product.productId} rowsDeleted=${deleted.count}`,
+      `[delete] instanceId=${instance.id} productId=${product.productId} rowsDeleted=${deleted.count}`,
     );
 
-    await this.cache.del(`instance:${instanceId}`);
+    await this.cache.del(`instance:${instance.id}`);
+    if (instance.providerInstanceId) {
+      await this.cache.del(`instance:${instance.providerInstanceId}`);
+    }
   }
 }

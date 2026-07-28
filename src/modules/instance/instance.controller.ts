@@ -41,7 +41,11 @@ export class InstanceController {
 
   @Get('list')
   @ApiOperation({ summary: 'Listar instâncias do produto' })
-  @ApiResponse({ status: 200, description: 'Lista de instâncias com id (UUID Hub) em cada item' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Lista de instâncias do produto: id = UUID Hub, providerInstanceId = UUID do provider',
+  })
   list(@Product() product: AuthCachePayload) {
     return this.service.listInstances(product);
   }
