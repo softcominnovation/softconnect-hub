@@ -13,6 +13,22 @@ export class QuotedMessageDto {
   key!: { id: string; remoteJid?: string; fromMe?: boolean };
 }
 
+/** Webhook de feedback por mensagem (somente Hub/batch — nunca enviado à Evolution) */
+export class MessageWebhookDto {
+  @ApiProperty({
+    description: 'URL de callback para o resultado desta mensagem',
+    example: 'https://cliente.example.com/callback',
+  })
+  url!: string;
+
+  @ApiProperty({
+    description: 'Headers HTTP extras no POST do callback',
+    required: false,
+    example: { authorization: 'Bearer 123' },
+  })
+  headers?: Record<string, string>;
+}
+
 export class SendTextDto {
   @ApiProperty({ description: 'Número de destino (DDI+DDD+número)', example: '5511999990001' })
   number!: string;
@@ -150,25 +166,65 @@ export class SendListDto {
   quoted?: QuotedMessageDto;
 }
 
+/** Item de lote de texto — webhook opcional só para o Hub */
+export class BatchTextMessageDto extends SendTextDto {
+  @ApiProperty({
+    description:
+      'Callback desta mensagem (prioridade sobre o webhook do produto). Não é enviado à Evolution.',
+    type: () => MessageWebhookDto,
+    required: false,
+  })
+  webhook?: MessageWebhookDto;
+}
+
+export class BatchMediaMessageDto extends SendMediaDto {
+  @ApiProperty({
+    description:
+      'Callback desta mensagem (prioridade sobre o webhook do produto). Não é enviado à Evolution.',
+    type: () => MessageWebhookDto,
+    required: false,
+  })
+  webhook?: MessageWebhookDto;
+}
+
+export class BatchDocumentMessageDto extends SendDocumentDto {
+  @ApiProperty({
+    description:
+      'Callback desta mensagem (prioridade sobre o webhook do produto). Não é enviado à Evolution.',
+    type: () => MessageWebhookDto,
+    required: false,
+  })
+  webhook?: MessageWebhookDto;
+}
+
 export class SendBatchDto {
-  @ApiProperty({ description: 'Lista de mensagens de texto para envio em lote', type: [SendTextDto] })
-  messages!: SendTextDto[];
+  @ApiProperty({
+    description: 'Lista de mensagens de texto para envio em lote',
+    type: [BatchTextMessageDto],
+  })
+  messages!: BatchTextMessageDto[];
 
   @ApiProperty({ description: 'Delay entre cada mensagem do lote (ms)', example: 1000, required: false })
   delayMs?: number;
 }
 
 export class SendBatchMediaDto {
-  @ApiProperty({ description: 'Lista de mensagens de mídia para envio em lote', type: [SendMediaDto] })
-  messages!: SendMediaDto[];
+  @ApiProperty({
+    description: 'Lista de mensagens de mídia para envio em lote',
+    type: [BatchMediaMessageDto],
+  })
+  messages!: BatchMediaMessageDto[];
 
   @ApiProperty({ description: 'Delay entre cada mensagem do lote (ms)', example: 1000, required: false })
   delayMs?: number;
 }
 
 export class SendBatchDocumentDto {
-  @ApiProperty({ description: 'Lista de documentos para envio em lote', type: [SendDocumentDto] })
-  messages!: SendDocumentDto[];
+  @ApiProperty({
+    description: 'Lista de documentos para envio em lote',
+    type: [BatchDocumentMessageDto],
+  })
+  messages!: BatchDocumentMessageDto[];
 
   @ApiProperty({ description: 'Delay entre cada mensagem do lote (ms)', example: 1000, required: false })
   delayMs?: number;

@@ -48,8 +48,7 @@ describe('BatchWorker', () => {
     providerApiKey: 'key',
     messageType: 'text' as const,
     message: { number: '5511999990001', text: 'Olá' },
-    batchWebhookEnabled: false,
-    batchWebhookUrl: null,
+    webhook: null as { url: string; headers?: Record<string, string> } | null,
   };
 
   beforeEach(async () => {
@@ -164,11 +163,13 @@ describe('BatchWorker', () => {
     expect(prisma.batchJob.update).not.toHaveBeenCalled();
   });
 
-  it('deve enfileirar webhook por mensagem com success=true quando sendText tem sucesso', async () => {
+  it('deve enfileirar webhook por mensagem com success=true quando webhook está definido', async () => {
     const payload = {
       ...basePayload,
-      batchWebhookEnabled: true,
-      batchWebhookUrl: 'https://cliente.example.com/callback',
+      webhook: {
+        url: 'https://cliente.example.com/callback',
+        headers: { authorization: 'Bearer x' },
+      },
     };
 
     cache.increment.mockResolvedValue(1);
@@ -180,6 +181,7 @@ describe('BatchWorker', () => {
       'notify',
       expect.objectContaining({
         batchWebhookUrl: 'https://cliente.example.com/callback',
+        batchWebhookHeaders: { authorization: 'Bearer x' },
         apiKeyHash: 'hash-abc',
         batchJobId: 'job-1',
         productId: 'prod-1',
@@ -195,8 +197,7 @@ describe('BatchWorker', () => {
   it('deve enfileirar webhook por mensagem com success=false quando sendText falha', async () => {
     const payload = {
       ...basePayload,
-      batchWebhookEnabled: true,
-      batchWebhookUrl: 'https://cliente.example.com/callback',
+      webhook: { url: 'https://cliente.example.com/callback' },
     };
 
     cache.increment.mockResolvedValue(1);
@@ -215,7 +216,7 @@ describe('BatchWorker', () => {
     );
   });
 
-  it('não deve enfileirar webhook quando batchWebhookEnabled é false', async () => {
+  it('não deve enfileirar webhook quando webhook é null', async () => {
     cache.increment.mockResolvedValue(1);
     cache.get.mockResolvedValue(null);
 

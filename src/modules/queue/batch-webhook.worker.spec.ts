@@ -122,6 +122,29 @@ describe('BatchWebhookWorker', () => {
     expect(headers['X-Hub-Event']).toBe('batch.message.result');
   });
 
+  it('deve mesclar headers do cliente e manter headers do Hub', async () => {
+    await getProcessor()({
+      data: {
+        ...payload,
+        batchWebhookHeaders: {
+          authorization: 'Bearer 123',
+          'Content-Type': 'text/plain',
+        },
+      },
+    });
+
+    const headers = (
+      (axios.post as jest.Mock).mock.calls[0][2] as {
+        headers: Record<string, string>;
+      }
+    ).headers;
+
+    expect(headers.authorization).toBe('Bearer 123');
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers['X-Hub-Event']).toBe('batch.message.result');
+    expect(headers['X-Hub-Signature']).toMatch(/^sha256=/);
+  });
+
   it('deve lançar erro quando axios.post falha para que BullMQ realize retry', async () => {
     (axios.post as jest.Mock).mockRejectedValue(new Error('network error'));
 
