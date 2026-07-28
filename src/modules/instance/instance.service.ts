@@ -63,10 +63,7 @@ export class InstanceService {
     product: AuthCachePayload,
     dto: CreateInstanceDto,
   ): Promise<
-    InstanceCreatedDto & {
-      id: string;
-      providerInstanceId: string | null;
-    } & Record<string, unknown>
+    InstanceCreatedDto & { hubId: string } & Record<string, unknown>
   > {
     if (!product.vpsProviderId) {
       throw new BadRequestException('Produto sem VpsProvider associado');
@@ -137,13 +134,12 @@ export class InstanceService {
       },
     });
 
-    const response: InstanceCreatedDto & {
-      id: string;
-      providerInstanceId: string | null;
-    } & Record<string, unknown> = {
+    const response: InstanceCreatedDto & { hubId: string } & Record<
+        string,
+        unknown
+      > = {
       ...result,
-      id: instance.id,
-      providerInstanceId: instance.providerInstanceId,
+      hubId: instance.id,
     };
 
     if (adapter.applyInstanceDefaults) {
@@ -280,18 +276,17 @@ export class InstanceService {
           ? byProviderId.get(hub.providerInstanceId)
           : undefined) ?? byName.get(hub.instanceName);
 
-      const providerInstanceId =
-        hub.providerInstanceId ??
-        providerMatch?.id ??
-        providerMatch?.instanceId ??
-        null;
+      if (providerMatch) {
+        return {
+          ...providerMatch,
+          hubId: hub.id,
+        } as InstanceDto;
+      }
 
       return {
-        ...(providerMatch ?? {}),
-        id: hub.id,
-        providerInstanceId,
+        hubId: hub.id,
         instanceName: hub.instanceName,
-        status: providerMatch?.status ?? hub.status,
+        status: hub.status,
       } as InstanceDto;
     });
   }
@@ -311,18 +306,10 @@ export class InstanceService {
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     const raw = await adapter.fetchInstance(ctx, resolved.instanceName);
 
-    const hub = await this.prisma.instance.findFirst({
-      where: { id: resolved.instanceId, productId: product.productId },
-      select: { id: true, providerInstanceId: true, instanceName: true },
-    });
-
     return {
       ...raw,
-      id: resolved.instanceId,
-      providerInstanceId:
-        hub?.providerInstanceId ?? raw.id ?? raw.instanceId ?? null,
-      instanceName: resolved.instanceName,
-    };
+      hubId: resolved.instanceId,
+    } as InstanceDto;
   }
 
   async connectInstance(

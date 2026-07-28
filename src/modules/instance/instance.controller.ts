@@ -34,7 +34,7 @@ export class InstanceController {
   @Post('create')
   @ApiOperation({ summary: 'Criar instância no provider' })
   @ApiBody({ type: CreateInstanceDto })
-  @ApiResponse({ status: 201, description: 'Instância criada — retorna id (UUID Hub) na resposta' })
+  @ApiResponse({ status: 201, description: 'Instância criada — retorna hubId na resposta' })
   create(@Product() product: AuthCachePayload, @Body() dto: CreateInstanceDto) {
     return this.service.createInstance(product, dto);
   }
@@ -44,7 +44,7 @@ export class InstanceController {
   @ApiResponse({
     status: 200,
     description:
-      'Lista de instâncias do produto: id = UUID Hub, providerInstanceId = UUID do provider',
+      'Objeto do provider com hubId injetado em cada instância do produto',
   })
   list(@Product() product: AuthCachePayload) {
     return this.service.listInstances(product);
@@ -52,7 +52,7 @@ export class InstanceController {
 
   @Get(':instanceId')
   @ApiOperation({ summary: 'Buscar dados de uma instância específica' })
-  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância (hubId ou id do provider)' })
   @ApiResponse({ status: 200, description: 'Dados da instância' })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   fetchInstance(
@@ -64,7 +64,7 @@ export class InstanceController {
 
   @Get(':instanceId/connect')
   @ApiOperation({ summary: 'Conectar instância — retorna QR code ou state:open (polimórfico)' })
-  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância (hubId ou id do provider)' })
   @ApiResponse({ status: 200, description: 'QR code (base64) ou estado open' })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   connect(
@@ -76,7 +76,7 @@ export class InstanceController {
 
   @Get(':instanceId/status')
   @ApiOperation({ summary: 'Estado de conexão da instância' })
-  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância (hubId ou id do provider)' })
   @ApiResponse({ status: 200, description: 'Estado atual da conexão' })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   status(
@@ -89,7 +89,7 @@ export class InstanceController {
   @Post(':instanceId/restart')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Reiniciar instância' })
-  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância (hubId ou id do provider)' })
   @ApiResponse({ status: 204, description: 'Instância reiniciada' })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   restart(
@@ -102,7 +102,7 @@ export class InstanceController {
   @Post(':instanceId/disconnect')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Deslogar instância do WhatsApp' })
-  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância (hubId ou id do provider)' })
   @ApiResponse({ status: 204, description: 'Logout realizado' })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   disconnect(
@@ -115,7 +115,7 @@ export class InstanceController {
   @Delete(':instanceId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Deletar instância' })
-  @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
+  @ApiParam({ name: 'instanceId', description: 'UUID da instância (hubId ou id do provider)' })
   @ApiResponse({ status: 204, description: 'Instância deletada' })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   delete(

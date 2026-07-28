@@ -78,7 +78,7 @@ export class AdminInstancesService {
   async createInstance(
     productId: string,
     dto: CreateInstanceDto,
-  ): Promise<InstanceCreatedDto & { id: string }> {
+  ): Promise<InstanceCreatedDto & { hubId: string }> {
     const payload = await this.buildPayload(productId);
     return this.instanceService.createInstance(payload, dto);
   }
