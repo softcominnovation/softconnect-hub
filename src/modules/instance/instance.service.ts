@@ -270,25 +270,29 @@ export class InstanceService {
       if (pi.instanceName) byName.set(pi.instanceName, pi);
     }
 
-    return hubInstances.map((hub) => {
+    const list: InstanceDto[] = [];
+
+    for (const hub of hubInstances) {
       const providerMatch =
         (hub.providerInstanceId
           ? byProviderId.get(hub.providerInstanceId)
           : undefined) ?? byName.get(hub.instanceName);
 
-      if (providerMatch) {
-        return {
-          ...providerMatch,
-          hubId: hub.id,
-        } as InstanceDto;
+      // Só retorna o que existe no provider — evita stubs { hubId, instanceName, status }
+      if (!providerMatch) {
+        this.logger.warn(
+          `[listInstances] órfão no Hub sem match no provider — omitindo. hubId=${hub.id} instanceName=${hub.instanceName} providerInstanceId=${hub.providerInstanceId}`,
+        );
+        continue;
       }
 
-      return {
+      list.push({
+        ...providerMatch,
         hubId: hub.id,
-        instanceName: hub.instanceName,
-        status: hub.status,
-      } as InstanceDto;
-    });
+      } as InstanceDto);
+    }
+
+    return list;
   }
 
   async fetchInstance(
