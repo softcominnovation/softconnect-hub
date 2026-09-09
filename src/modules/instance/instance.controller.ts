@@ -127,8 +127,13 @@ export class InstanceController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Deletar instância' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância (hubId ou id do provider)' })
-  @ApiResponse({ status: 204, description: 'Instância deletada' })
+  @ApiResponse({ status: 204, description: 'Instância deletada no provider e no Hub' })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
+  @ApiResponse({
+    status: 502,
+    description:
+      'Falha ao deletar no provider — registro no Hub mantido (sem dessincronização)',
+  })
   delete(
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,

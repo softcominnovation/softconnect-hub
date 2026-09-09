@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   HttpException,
@@ -27,6 +28,27 @@ function extractErrorDetail(err: unknown): string {
   }
   if (err instanceof Error) return err.message;
   return JSON.stringify(err);
+}
+
+/** Provider já não tem a instância — seguro limpar o Hub (idempotente). */
+function isProviderNotFoundError(err: unknown): boolean {
+  if (!(err instanceof HttpException)) return false;
+
+  const status = err.getStatus();
+  if (status === 404) return true;
+
+  // Evolution às vezes responde 400 com "does not exist" / "not found"
+  if (status >= 400 && status < 500) {
+    const detail = extractErrorDetail(err).toLowerCase();
+    return (
+      detail.includes('not found') ||
+      detail.includes('does not exist') ||
+      detail.includes('não encontrad') ||
+      detail.includes('nao encontrad')
+    );
+  }
+
+  return false;
 }
 import { ConfigService } from '@nestjs/config';
 import { AuthCachePayload } from '../../auth/apikey.guard';
@@ -117,6 +139,26 @@ export class InstanceService {
         `[createInstance] registro órfão encontrado no Hub (id=${existingInstance.id}) sem correspondência no provider — removendo e recriando`,
       );
       await this.prisma.instance.delete({ where: { id: existingInstance.id } });
+    } else {
+      // Hub sem registro: ainda assim bloquear se o nome já existir no provider
+      // (evita falso "criar" após delete dessincronizado no passado).
+      const adapterForCheck = this.adapterResolver.resolve(product.adapterType);
+      try {
+        const providerInstances = await adapterForCheck.fetchInstances(ctx);
+        const existsInProvider = providerInstances.some(
+          (i) => i.instanceName === dto.instanceName,
+        );
+        if (existsInProvider) {
+          throw new ConflictException(
+            `Instância "${dto.instanceName}" já existe no provider, mas não está registrada no Hub. Remova-a no provider ou importe-a pelo Manager antes de criar.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof ConflictException) throw err;
+        this.logger.warn(
+          `[createInstance] não foi possível verificar existência no provider antes de criar — prosseguindo. error=${extractErrorDetail(err)}`,
+        );
+      }
     }
 
     const adapter = this.adapterResolver.resolve(product.adapterType);
@@ -422,12 +464,24 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(instance.product.adapterType);
 
+    // Provider primeiro: só remove do Hub se o provider confirmar sucesso
+    // (ou se a instância já não existir lá — delete idempotente).
     try {
       await adapter.deleteInstance(ctx, instance.instanceName);
     } catch (err) {
-      this.logger.warn(
-        `[delete] provider error for instanceId=${instance.id} — continuing with DB soft-delete. error=${(err as Error).message}`,
-      );
+      if (isProviderNotFoundError(err)) {
+        this.logger.warn(
+          `[delete] provider já não possui a instância "${instance.instanceName}" (instanceId=${instance.id}) — removendo registro órfão do Hub`,
+        );
+      } else {
+        const detail = extractErrorDetail(err);
+        this.logger.error(
+          `[delete] falha no provider — abortando remoção no Hub. instanceId=${instance.id} instanceName=${instance.instanceName} error=${detail}`,
+        );
+        throw new BadGatewayException(
+          `Falha ao deletar a instância "${instance.instanceName}" no provider. O registro no Hub foi mantido para evitar dessincronização. Detalhe: ${detail}`,
+        );
+      }
     }
 
     const deleted = await this.prisma.instance.deleteMany({

@@ -195,10 +195,15 @@ export class AdminInstancesController {
   @ApiOperation({ summary: 'Deletar instância' })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
-  @ApiResponse({ status: 204, description: 'Instância deletada' })
+  @ApiResponse({ status: 204, description: 'Instância deletada no provider e no Hub' })
   @ApiResponse({
     status: 404,
     description: 'Produto ou instância não encontrado',
+  })
+  @ApiResponse({
+    status: 502,
+    description:
+      'Falha ao deletar no provider — registro no Hub mantido',
   })
   delete(
     @Param('productId') productId: string,
