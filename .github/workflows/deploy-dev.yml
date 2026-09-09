@@ -1,9 +1,11 @@
 # =============================================================================
 # SoftConnect 2.0 — CI/CD Pipeline DESENVOLVIMENTO
-# Trigger 1: push na branch `develop`      → publica tag `dev` + `dev-<sha>`
-# Trigger 2: push de tag `v*.*.*-dev`      → publica tags: `0.1.0-dev`, `dev`
-#             push de tag `v*.*.*-beta`     → publica tags: `0.1.0-beta`, `dev`
-#             push de tag `v*.*.*-rc.*`     → publica tags: `0.1.0-rc.1`, `dev`
+# Trigger: somente push de tags de pre-release
+#   - `v*.*.*-dev`   → publica tags: `0.1.0-dev`, `dev`, `dev-<sha>`
+#   - `v*.*.*-beta`  → publica tags: `0.1.0-beta`, `dev`, `dev-<sha>`
+#   - `v*.*.*-rc.*`  → publica tags: `0.1.0-rc.1`, `dev`, `dev-<sha>`
+#
+# Push em branches (develop, main, feature/*, etc.) NÃO dispara este workflow.
 #
 # Exemplos de tags válidos:
 #   v0.1.0-dev    v0.2.0-beta    v1.0.0-rc.1    v1.0.0-rc.2
@@ -17,15 +19,11 @@ name: Deploy → Desenvolvimento
 
 on:
   push:
-    branches:
-      - develop
     tags:
       # Aceita: v0.1.0-dev / v0.2.0-beta / v1.0.0-rc.1 / v1.0.0-rc.2 ...
       - 'v[0-9]+.[0-9]+.[0-9]+-dev'
       - 'v[0-9]+.[0-9]+.[0-9]+-beta'
       - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
-    paths:
-      - '**'
 
 jobs:
   build-and-push:
@@ -53,7 +51,6 @@ jobs:
       # ┌──────────────────────────────────────────────────────────────────┐
       # │  Evento              │  Tags publicadas no GHCR                  │
       # ├──────────────────────────────────────────────────────────────────┤
-      # │  push na develop     │  dev  +  dev-abc1234                      │
       # │  tag v0.1.0-dev      │  0.1.0-dev  +  dev  +  dev-abc1234       │
       # │  tag v0.2.0-beta     │  0.2.0-beta  +  dev  +  dev-abc1234      │
       # │  tag v1.0.0-rc.1     │  1.0.0-rc.1  +  dev  +  dev-abc1234     │
@@ -82,27 +79,17 @@ jobs:
 
       - name: Resumo
         run: |
-          IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
           VERSION="${{ github.ref_name }}"
           echo "## 🔧 Imagem de Desenvolvimento publicada" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "$IS_TAG" = "true" ]; then
-            echo "### 🏷️ Pre-release versionada: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
-            echo "Tags publicadas:" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:${VERSION#v}\`" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:dev\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### 🔄 Build contínuo da branch \`develop\`" >> $GITHUB_STEP_SUMMARY
-            echo "Tags publicadas:" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:dev\`" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:dev-$(echo ${{ github.sha }} | cut -c1-7)\`" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "### 🏷️ Pre-release versionada: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "Tags publicadas:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:${VERSION#v}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:dev\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 👉 Próximo passo — deploy manual" >> $GITHUB_STEP_SUMMARY
           echo "1. Acesse o Portainer" >> $GITHUB_STEP_SUMMARY
           echo "2. Stacks → \`softconnect-dev\`" >> $GITHUB_STEP_SUMMARY
           echo "3. **Update the stack** → marque ✅ Re-pull image → **Deploy**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "$IS_TAG" = "true" ]; then
-            echo "> Para fixar a versão no Portainer, edite a stack e troque \`dev\` por \`${VERSION#v}\`" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "> Para fixar a versão no Portainer, edite a stack e troque \`dev\` por \`${VERSION#v}\`" >> $GITHUB_STEP_SUMMARY

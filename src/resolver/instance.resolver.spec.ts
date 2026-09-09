@@ -160,7 +160,11 @@ describe('InstanceResolverService', () => {
 
       expect(mockPrisma.instance.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'inst-1', productId: 'prod-1', isActive: true },
+          where: {
+            productId: 'prod-1',
+            isActive: true,
+            OR: [{ id: 'inst-1' }, { providerInstanceId: 'inst-1' }],
+          },
         }),
       );
       expect(mockCache.setWithTTL).toHaveBeenCalledWith(
@@ -172,6 +176,41 @@ describe('InstanceResolverService', () => {
         300,
       );
       expect(result.instanceName).toBe('test-instance');
+    });
+
+    it('should resolve by providerInstanceId when Hub id is not used', async () => {
+      mockCache.get.mockResolvedValueOnce(null);
+      mockPrisma.instance.findFirst.mockResolvedValueOnce({
+        ...mockInstance,
+        providerInstanceId: 'evo-uuid-1',
+      });
+      mockCache.setWithTTL.mockResolvedValue(undefined);
+
+      const result = await service.resolveById('prod-1', 'evo-uuid-1');
+
+      expect(mockPrisma.instance.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            productId: 'prod-1',
+            isActive: true,
+            OR: [
+              { id: 'evo-uuid-1' },
+              { providerInstanceId: 'evo-uuid-1' },
+            ],
+          },
+        }),
+      );
+      expect(result.instanceId).toBe('inst-1');
+      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
+        'instance:inst-1',
+        expect.any(Object),
+        300,
+      );
+      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
+        'instance:evo-uuid-1',
+        expect.any(Object),
+        300,
+      );
     });
 
     it('should throw NotFoundException when instance is not found', async () => {

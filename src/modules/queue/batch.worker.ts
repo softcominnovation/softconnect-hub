@@ -48,11 +48,28 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
         const processedAt = new Date().toISOString();
 
         try {
-          await adapter.sendText(
-            ctx,
-            payload.instanceName,
-            payload.message as Parameters<typeof adapter.sendText>[2],
-          );
+          // Jobs antigos na fila podem não ter messageType — default text
+          const messageType = payload.messageType ?? 'text';
+
+          if (messageType === 'media') {
+            await adapter.sendMedia(
+              ctx,
+              payload.instanceName,
+              payload.message as Parameters<typeof adapter.sendMedia>[2],
+            );
+          } else if (messageType === 'document') {
+            await adapter.sendDocument(
+              ctx,
+              payload.instanceName,
+              payload.message as Parameters<typeof adapter.sendDocument>[2],
+            );
+          } else {
+            await adapter.sendText(
+              ctx,
+              payload.instanceName,
+              payload.message as Parameters<typeof adapter.sendText>[2],
+            );
+          }
           await this.cache.increment(`batch:sent:${payload.batchJobId}`);
         } catch (err) {
           success = false;
@@ -66,12 +83,24 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
           );
           throw err;
         } finally {
-          if (payload.batchWebhookEnabled && payload.batchWebhookUrl) {
+          // Compat: jobs antigos usavam batchWebhookEnabled/Url no payload
+          const legacy = payload as BatchJobPayload & {
+            batchWebhookEnabled?: boolean;
+            batchWebhookUrl?: string | null;
+          };
+          const webhook =
+            payload.webhook ??
+            (legacy.batchWebhookEnabled && legacy.batchWebhookUrl
+              ? { url: legacy.batchWebhookUrl }
+              : null);
+
+          if (webhook?.url) {
             try {
               await this.batchWebhookQueue.add(
                 'notify',
                 {
-                  batchWebhookUrl: payload.batchWebhookUrl,
+                  batchWebhookUrl: webhook.url,
+                  batchWebhookHeaders: webhook.headers ?? null,
                   apiKeyHash: payload.apiKeyHash,
                   batchJobId: payload.batchJobId,
                   productId: payload.productId,

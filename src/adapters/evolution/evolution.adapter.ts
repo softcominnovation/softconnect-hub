@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   ApplyInstanceDefaultsResult,
   ChatDto,
@@ -102,11 +102,11 @@ export class EvolutionAdapter implements WhatsAppProvider {
     });
   }
 
-  fetchInstance(
+  async fetchInstance(
     ctx: ProviderContext,
     instanceName: string,
   ): Promise<InstanceDto> {
-    return this.http.request(
+    const raw = await this.http.request(
       'get',
       ctx.providerUrl,
       ctx.providerApiKey,
@@ -114,6 +114,44 @@ export class EvolutionAdapter implements WhatsAppProvider {
       undefined,
       { instanceName },
     );
+
+    // Evolution devolve array mesmo filtrando por instanceName
+    const list = Array.isArray(raw)
+      ? (raw as Record<string, unknown>[])
+      : raw
+        ? [raw as Record<string, unknown>]
+        : [];
+
+    const inst = list[0];
+    if (!inst) {
+      throw new NotFoundException(
+        `Instância "${instanceName}" não encontrada no provider`,
+      );
+    }
+
+    const nested = inst.instance as Record<string, unknown> | undefined;
+    const setting = inst.Setting as Record<string, unknown> | undefined;
+
+    const name =
+      (inst.instanceName as string | undefined) ||
+      (inst.name as string | undefined) ||
+      (nested?.instanceName as string | undefined) ||
+      instanceName;
+
+    const id =
+      (inst.id as string | undefined) ||
+      (nested?.instanceId as string | undefined) ||
+      (inst.instanceId as string | undefined) ||
+      (setting?.instanceId as string | undefined);
+
+    const status =
+      (inst.connectionStatus as string | undefined) ||
+      (nested?.connectionStatus as string | undefined) ||
+      (nested?.status as string | undefined) ||
+      (inst.status as string | undefined) ||
+      'unknown';
+
+    return { ...inst, instanceName: name, id, status } as unknown as InstanceDto;
   }
 
   connectInstance(

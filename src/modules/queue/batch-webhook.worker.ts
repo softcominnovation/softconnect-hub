@@ -12,6 +12,8 @@ import { parseRedisConnection } from '../../common/redis.util';
 
 export interface BatchWebhookJobPayload {
   batchWebhookUrl: string;
+  /** Headers extras do cliente; Hub sempre define Content-Type / X-Hub-* */
+  batchWebhookHeaders?: Record<string, string> | null;
   apiKeyHash: string;
   batchJobId: string;
   productId: string;
@@ -81,13 +83,18 @@ export class BatchWebhookWorker implements OnModuleInit, OnModuleDestroy {
       .update(bodyStr)
       .digest('hex');
 
+    const clientHeaders = payload.batchWebhookHeaders ?? {};
+    const headers: Record<string, string> = {
+      ...clientHeaders,
+      // Hub headers têm prioridade (não sobrescrever assinatura / content-type)
+      'Content-Type': 'application/json',
+      'X-Hub-Signature': `sha256=${signature}`,
+      'X-Hub-Event': 'batch.message.result',
+    };
+
     try {
       await axios.post(payload.batchWebhookUrl, body, {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Hub-Signature': `sha256=${signature}`,
-          'X-Hub-Event': 'batch.message.result',
-        },
+        headers,
         timeout: 10000,
         validateStatus: (s) => s >= 200 && s < 300,
       });

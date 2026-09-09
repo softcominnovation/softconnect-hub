@@ -21,12 +21,16 @@ export interface InstanceCreatedDto {
 
 export interface InstanceDto {
   instanceName: string;
+  /** UUID da instância no Hub (injetado pelo Hub) */
+  hubId?: string;
+  /** UUID da instância no provider */
   id?: string;
   instanceId?: string;
   status: string;
   owner?: string;
   profileName?: string;
   profilePictureUrl?: string;
+  [key: string]: unknown;
 }
 
 export interface ConnectInstanceDto {

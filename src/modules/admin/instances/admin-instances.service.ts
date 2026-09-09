@@ -78,14 +78,17 @@ export class AdminInstancesService {
   async createInstance(
     productId: string,
     dto: CreateInstanceDto,
-  ): Promise<InstanceCreatedDto & { id: string }> {
+  ): Promise<InstanceCreatedDto & { hubId: string }> {
     const payload = await this.buildPayload(productId);
     return this.instanceService.createInstance(payload, dto);
   }
 
-  async listInstances(productId: string): Promise<InstanceDto[]> {
+  async listInstances(
+    productId: string,
+    instanceNameFilter?: string,
+  ): Promise<InstanceDto[]> {
     const payload = await this.buildPayload(productId);
-    return this.instanceService.listInstances(payload);
+    return this.instanceService.listInstances(payload, instanceNameFilter);
   }
 
   async fetchInstance(

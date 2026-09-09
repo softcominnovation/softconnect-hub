@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   HttpException,
@@ -27,6 +28,27 @@ function extractErrorDetail(err: unknown): string {
   }
   if (err instanceof Error) return err.message;
   return JSON.stringify(err);
+}
+
+/** Provider já não tem a instância — seguro limpar o Hub (idempotente). */
+function isProviderNotFoundError(err: unknown): boolean {
+  if (!(err instanceof HttpException)) return false;
+
+  const status = err.getStatus();
+  if (status === 404) return true;
+
+  // Evolution às vezes responde 400 com "does not exist" / "not found"
+  if (status >= 400 && status < 500) {
+    const detail = extractErrorDetail(err).toLowerCase();
+    return (
+      detail.includes('not found') ||
+      detail.includes('does not exist') ||
+      detail.includes('não encontrad') ||
+      detail.includes('nao encontrad')
+    );
+  }
+
+  return false;
 }
 import { ConfigService } from '@nestjs/config';
 import { AuthCachePayload } from '../../auth/apikey.guard';
@@ -62,7 +84,9 @@ export class InstanceService {
   async createInstance(
     product: AuthCachePayload,
     dto: CreateInstanceDto,
-  ): Promise<InstanceCreatedDto & { id: string } & Record<string, unknown>> {
+  ): Promise<
+    InstanceCreatedDto & { hubId: string } & Record<string, unknown>
+  > {
     if (!product.vpsProviderId) {
       throw new BadRequestException('Produto sem VpsProvider associado');
     }
@@ -115,6 +139,26 @@ export class InstanceService {
         `[createInstance] registro órfão encontrado no Hub (id=${existingInstance.id}) sem correspondência no provider — removendo e recriando`,
       );
       await this.prisma.instance.delete({ where: { id: existingInstance.id } });
+    } else {
+      // Hub sem registro: ainda assim bloquear se o nome já existir no provider
+      // (evita falso "criar" após delete dessincronizado no passado).
+      const adapterForCheck = this.adapterResolver.resolve(product.adapterType);
+      try {
+        const providerInstances = await adapterForCheck.fetchInstances(ctx);
+        const existsInProvider = providerInstances.some(
+          (i) => i.instanceName === dto.instanceName,
+        );
+        if (existsInProvider) {
+          throw new ConflictException(
+            `Instância "${dto.instanceName}" já existe no provider, mas não está registrada no Hub. Remova-a no provider ou importe-a pelo Manager antes de criar.`,
+          );
+        }
+      } catch (err) {
+        if (err instanceof ConflictException) throw err;
+        this.logger.warn(
+          `[createInstance] não foi possível verificar existência no provider antes de criar — prosseguindo. error=${extractErrorDetail(err)}`,
+        );
+      }
     }
 
     const adapter = this.adapterResolver.resolve(product.adapterType);
@@ -132,12 +176,12 @@ export class InstanceService {
       },
     });
 
-    const response: InstanceCreatedDto & { id: string } & Record<
+    const response: InstanceCreatedDto & { hubId: string } & Record<
         string,
         unknown
       > = {
       ...result,
-      id: instance.id,
+      hubId: instance.id,
     };
 
     if (adapter.applyInstanceDefaults) {
@@ -230,7 +274,10 @@ export class InstanceService {
     return response;
   }
 
-  async listInstances(product: AuthCachePayload): Promise<InstanceDto[]> {
+  async listInstances(
+    product: AuthCachePayload,
+    instanceNameFilter?: string,
+  ): Promise<InstanceDto[]> {
     if (!product.vpsProviderId) {
       throw new BadRequestException('Produto sem VpsProvider associado');
     }
@@ -251,7 +298,58 @@ export class InstanceService {
     };
 
     const adapter = this.adapterResolver.resolve(product.adapterType);
-    return adapter.fetchInstances(ctx);
+    const nameFilter = instanceNameFilter?.trim() || undefined;
+
+    const [hubInstances, providerInstances] = await Promise.all([
+      this.prisma.instance.findMany({
+        where: {
+          productId: product.productId,
+          isActive: true,
+          ...(nameFilter
+            ? {
+                instanceName: {
+                  contains: nameFilter,
+                  mode: 'insensitive' as const,
+                },
+              }
+            : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      adapter.fetchInstances(ctx),
+    ]);
+
+    const byProviderId = new Map<string, InstanceDto>();
+    const byName = new Map<string, InstanceDto>();
+    for (const pi of providerInstances) {
+      const providerId = pi.id ?? pi.instanceId;
+      if (providerId) byProviderId.set(providerId, pi);
+      if (pi.instanceName) byName.set(pi.instanceName, pi);
+    }
+
+    const list: InstanceDto[] = [];
+
+    for (const hub of hubInstances) {
+      const providerMatch =
+        (hub.providerInstanceId
+          ? byProviderId.get(hub.providerInstanceId)
+          : undefined) ?? byName.get(hub.instanceName);
+
+      // Só retorna o que existe no provider — evita stubs { hubId, instanceName, status }
+      if (!providerMatch) {
+        this.logger.warn(
+          `[listInstances] órfão no Hub sem match no provider — omitindo. hubId=${hub.id} instanceName=${hub.instanceName} providerInstanceId=${hub.providerInstanceId}`,
+        );
+        continue;
+      }
+
+      list.push({
+        ...providerMatch,
+        hubId: hub.id,
+      } as InstanceDto);
+    }
+
+    return list;
   }
 
   async fetchInstance(
@@ -267,7 +365,13 @@ export class InstanceService {
       providerApiKey: resolved.providerApiKey,
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
-    return adapter.fetchInstance(ctx, resolved.instanceName);
+    const raw = await adapter.fetchInstance(ctx, resolved.instanceName);
+    const payload = Array.isArray(raw) ? (raw[0] ?? {}) : raw;
+
+    return {
+      ...payload,
+      hubId: resolved.instanceId,
+    } as InstanceDto;
   }
 
   async connectInstance(
@@ -332,7 +436,7 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     await adapter.logoutInstance(ctx, resolved.instanceName);
-    await this.cache.del(`instance:${instanceId}`);
+    await this.cache.del(`instance:${resolved.instanceId}`);
   }
 
   async deleteInstance(
@@ -340,7 +444,10 @@ export class InstanceService {
     instanceId: string,
   ): Promise<void> {
     const instance = await this.prisma.instance.findFirst({
-      where: { id: instanceId, productId: product.productId },
+      where: {
+        productId: product.productId,
+        OR: [{ id: instanceId }, { providerInstanceId: instanceId }],
+      },
       include: { vpsProvider: true, product: true },
     });
 
@@ -357,22 +464,37 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(instance.product.adapterType);
 
+    // Provider primeiro: só remove do Hub se o provider confirmar sucesso
+    // (ou se a instância já não existir lá — delete idempotente).
     try {
       await adapter.deleteInstance(ctx, instance.instanceName);
     } catch (err) {
-      this.logger.warn(
-        `[delete] provider error for instanceId=${instanceId} — continuing with DB soft-delete. error=${(err as Error).message}`,
-      );
+      if (isProviderNotFoundError(err)) {
+        this.logger.warn(
+          `[delete] provider já não possui a instância "${instance.instanceName}" (instanceId=${instance.id}) — removendo registro órfão do Hub`,
+        );
+      } else {
+        const detail = extractErrorDetail(err);
+        this.logger.error(
+          `[delete] falha no provider — abortando remoção no Hub. instanceId=${instance.id} instanceName=${instance.instanceName} error=${detail}`,
+        );
+        throw new BadGatewayException(
+          `Falha ao deletar a instância "${instance.instanceName}" no provider. O registro no Hub foi mantido para evitar dessincronização. Detalhe: ${detail}`,
+        );
+      }
     }
 
     const deleted = await this.prisma.instance.deleteMany({
-      where: { id: instanceId, productId: product.productId },
+      where: { id: instance.id, productId: product.productId },
     });
 
     this.logger.log(
-      `[delete] instanceId=${instanceId} productId=${product.productId} rowsDeleted=${deleted.count}`,
+      `[delete] instanceId=${instance.id} productId=${product.productId} rowsDeleted=${deleted.count}`,
     );
 
-    await this.cache.del(`instance:${instanceId}`);
+    await this.cache.del(`instance:${instance.id}`);
+    if (instance.providerInstanceId) {
+      await this.cache.del(`instance:${instance.providerInstanceId}`);
+    }
   }
 }

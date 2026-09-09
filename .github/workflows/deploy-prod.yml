@@ -1,7 +1,11 @@
 # =============================================================================
 # SoftConnect 2.0 — CI/CD Pipeline PRODUÇÃO
-# Trigger 1: push na branch `main`  → publica tag `latest` + `prod-<sha>`
-# Trigger 2: push de tag `v*.*.*`   → publica tags semver: `1.2.3`, `1.2`, `1`, `latest`
+# Trigger: somente push de tag semver estável `v*.*.*`
+#   → publica tags: `1.2.3`, `1.2`, `1` (se >= v1), `latest`, `prod-<sha>`
+#
+# Push em branches (main, develop, feature/*, etc.) NÃO dispara este workflow.
+# Tags de pre-release (v*-dev / v*-beta / v*-rc.*) NÃO disparam este workflow.
+#
 # Ação: build imagem Docker → push GHCR
 # Deploy: manual via Portainer (Stacks → softconnect-prod → Update → Re-pull image)
 # Subdomínio: api.hub.softconnect.net.br
@@ -11,12 +15,8 @@ name: Deploy → Produção
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'   # Dispara em: v1.0.0, v2.3.1, etc.
-    paths:
-      - '**'
 
 jobs:
   build-and-push:
@@ -50,7 +50,6 @@ jobs:
       # ┌─────────────────────────────────────────────────────────────────┐
       # │  Evento           │  Tags publicadas no GHCR                    │
       # ├─────────────────────────────────────────────────────────────────┤
-      # │  push na main     │  latest  +  prod-abc1234                    │
       # │  tag v1.2.3       │  1.2.3   +  1.2  +  1  +  latest           │
       # └─────────────────────────────────────────────────────────────────┘
       - name: Extrair metadados da imagem
@@ -63,7 +62,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            # Sempre publica `latest` (tanto no push da main quanto no tag)
+            # Sempre publica `latest`
             type=raw,value=latest
             # Fingerprint do commit (rastreabilidade)
             type=sha,prefix=prod-,format=short
@@ -81,21 +80,13 @@ jobs:
       # 6. Resumo no summary do workflow
       - name: Resumo
         run: |
-          IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
           VERSION="${{ github.ref_name }}"
           echo "## ✅ Imagem de Produção publicada" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "$IS_TAG" = "true" ]; then
-            echo "### 🏷️ Release versionada: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
-            echo "Tags publicadas:" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:${VERSION#v}\`" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:latest\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### 🔄 Build contínuo da branch \`main\`" >> $GITHUB_STEP_SUMMARY
-            echo "Tags publicadas:" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:latest\`" >> $GITHUB_STEP_SUMMARY
-            echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:prod-$(echo ${{ github.sha }} | cut -c1-7)\`" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "### 🏷️ Release versionada: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "Tags publicadas:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:${VERSION#v}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/${{ github.repository_owner }}/softconnect:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 👉 Próximo passo — deploy manual" >> $GITHUB_STEP_SUMMARY
           echo "1. Acesse o Portainer" >> $GITHUB_STEP_SUMMARY
@@ -103,9 +94,3 @@ jobs:
           echo "3. **Update the stack** → marque ✅ Re-pull image → **Deploy**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "> Para fixar uma versão específica no Portainer, edite a stack e troque \`latest\` por \`${VERSION#v}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Imagem:** \`ghcr.io/${{ github.repository_owner }}/softconnect:latest\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 👉 Próximo passo — deploy manual" >> $GITHUB_STEP_SUMMARY
-          echo "1. Acesse o Portainer" >> $GITHUB_STEP_SUMMARY
-          echo "2. Stacks → \`softconnect-prod\`" >> $GITHUB_STEP_SUMMARY
-          echo "3. **Update the stack** → marque ✅ Re-pull image → **Deploy**" >> $GITHUB_STEP_SUMMARY

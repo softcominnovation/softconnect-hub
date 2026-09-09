@@ -15,9 +15,9 @@ type FakeJob = {
     instanceName: string;
     providerUrl: string;
     providerApiKey: string;
+    messageType: 'text' | 'media' | 'document';
     message: SendTextDto;
-    batchWebhookEnabled: boolean;
-    batchWebhookUrl: string | null;
+    webhook: { url: string; headers?: Record<string, string> } | null;
   };
   opts: { delay?: number; attempts: number };
 };
@@ -53,6 +53,7 @@ describe('BatchProducer', () => {
       providerUrl,
       providerApiKey,
       messages,
+      'text',
       delayMs,
     );
   }
@@ -129,7 +130,7 @@ describe('BatchProducer', () => {
     jobs.forEach((job) => expect(job.opts.attempts).toBe(1));
   });
 
-  it('deve incluir batchWebhookEnabled e batchWebhookUrl no payload de cada job', async () => {
+  it('deve usar webhook do produto quando mensagem não tem override', async () => {
     await producer.addJobs(
       batchJobId,
       productId,
@@ -140,6 +141,7 @@ describe('BatchProducer', () => {
       providerUrl,
       providerApiKey,
       messages,
+      'text',
       undefined,
       true,
       'https://cliente.example.com/callback',
@@ -147,20 +149,86 @@ describe('BatchProducer', () => {
 
     const jobs = getCapturedJobs();
     jobs.forEach((job) => {
-      expect(job.data.batchWebhookEnabled).toBe(true);
-      expect(job.data.batchWebhookUrl).toBe(
-        'https://cliente.example.com/callback',
-      );
+      expect(job.data.webhook).toEqual({
+        url: 'https://cliente.example.com/callback',
+      });
     });
   });
 
-  it('deve usar batchWebhookEnabled=false e batchWebhookUrl=null por padrão', async () => {
+  it('deve gravar messageType=document e job name sendDocument', async () => {
+    await producer.addJobs(
+      batchJobId,
+      productId,
+      apiKeyHash,
+      instanceId,
+      adapterType,
+      instanceName,
+      providerUrl,
+      providerApiKey,
+      [{ number: '5511999990001', media: 'https://x/a.pdf', fileName: 'a.pdf' }],
+      'document',
+    );
+
+    const jobs = getCapturedJobs();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].name).toBe('sendDocument');
+    expect(jobs[0].data.messageType).toBe('document');
+  });
+
+  it('deve usar webhook=null quando produto não tem callback', async () => {
     await addAll();
 
     const jobs = getCapturedJobs();
     jobs.forEach((job) => {
-      expect(job.data.batchWebhookEnabled).toBe(false);
-      expect(job.data.batchWebhookUrl).toBeNull();
+      expect(job.data.webhook).toBeNull();
+    });
+  });
+
+  it('deve priorizar webhook da mensagem e remover do body enviado à Evolution', async () => {
+    await producer.addJobs(
+      batchJobId,
+      productId,
+      apiKeyHash,
+      instanceId,
+      adapterType,
+      instanceName,
+      providerUrl,
+      providerApiKey,
+      [
+        {
+          number: '5511999990001',
+          text: 'Olá',
+          webhook: {
+            url: 'https://override.example.com/hook',
+            headers: { authorization: 'Bearer 123' },
+          },
+        },
+        {
+          number: '5511999990002',
+          text: 'Sem override',
+        },
+      ],
+      'text',
+      undefined,
+      true,
+      'https://produto.example.com/callback',
+    );
+
+    const jobs = getCapturedJobs();
+    expect(jobs[0].data.message).toEqual({
+      number: '5511999990001',
+      text: 'Olá',
+    });
+    expect(jobs[0].data.webhook).toEqual({
+      url: 'https://override.example.com/hook',
+      headers: { authorization: 'Bearer 123' },
+    });
+    expect(jobs[1].data.message).toEqual({
+      number: '5511999990002',
+      text: 'Sem override',
+    });
+    expect(jobs[1].data.webhook).toEqual({
+      url: 'https://produto.example.com/callback',
     });
   });
 });

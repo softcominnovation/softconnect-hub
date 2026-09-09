@@ -100,8 +100,13 @@ export class InstanceResolverService {
 
     if (cached) return cached;
 
+    // Aceita UUID do Hub ou providerInstanceId (compat com listagens antigas)
     const instance = await this.prisma.instance.findFirst({
-      where: { id: instanceId, productId, isActive: true },
+      where: {
+        productId,
+        isActive: true,
+        OR: [{ id: instanceId }, { providerInstanceId: instanceId }],
+      },
       include: {
         vpsProvider: true,
         product: true,
@@ -124,10 +129,20 @@ export class InstanceResolverService {
       adapterType: instance.product.adapterType,
     };
 
-    await this.cache.setWithTTL(cacheKey, resolved, 300);
+    await this.cache.setWithTTL(`instance:${instance.id}`, resolved, 300);
+    if (
+      instance.providerInstanceId &&
+      instance.providerInstanceId !== instance.id
+    ) {
+      await this.cache.setWithTTL(
+        `instance:${instance.providerInstanceId}`,
+        resolved,
+        300,
+      );
+    }
 
     if (this.cacheDebug) {
-      this.logger.log(`[CACHE SET] key=${cacheKey} ttl=300s`);
+      this.logger.log(`[CACHE SET] key=instance:${instance.id} ttl=300s`);
     }
 
     return resolved;
