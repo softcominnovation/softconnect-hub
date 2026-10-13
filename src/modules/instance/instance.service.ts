@@ -51,6 +51,10 @@ function isProviderNotFoundError(err: unknown): boolean {
   return false;
 }
 import { ConfigService } from '@nestjs/config';
+import type {
+  ProductDefaultProxy,
+  ProductDefaultWebhook,
+} from '@prisma/client';
 import { AuthCachePayload } from '../../auth/apikey.guard';
 import { decryptAES256GCM } from '../../common/crypto.util';
 import { CacheService } from '../../cache/cache.service';
@@ -65,6 +69,10 @@ import {
   ProviderContext,
 } from '../../providers/whatsapp-provider.interface';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
+import {
+  QrRequestContext,
+  QrTimeoutException,
+} from '../../common/qr-request-context';
 
 @Injectable()
 export class InstanceService {
@@ -84,9 +92,10 @@ export class InstanceService {
   async createInstance(
     product: AuthCachePayload,
     dto: CreateInstanceDto,
-  ): Promise<
-    InstanceCreatedDto & { hubId: string } & Record<string, unknown>
-  > {
+    execution?: QrRequestContext,
+  ): Promise<InstanceCreatedDto & { hubId: string } & Record<string, unknown>> {
+    execution?.assertActive();
+    if (execution) execution.productId = product.productId;
     if (!product.vpsProviderId) {
       throw new BadRequestException('Produto sem VpsProvider associado');
     }
@@ -110,7 +119,9 @@ export class InstanceService {
         provider.providerApiKey,
         this.encryptionKeyHex,
       ),
+      ...(execution ? { execution } : {}),
     };
+    if (execution) execution.providerId = provider.id;
 
     const existingInstance = await this.prisma.instance.findFirst({
       where: { productId: product.productId, instanceName: dto.instanceName },
@@ -121,11 +132,13 @@ export class InstanceService {
       let existsInProvider = false;
 
       try {
+        execution?.assertActive();
         const providerInstances = await adapter.fetchInstances(ctx);
         existsInProvider = providerInstances.some(
           (i) => i.instanceName === dto.instanceName,
         );
-      } catch {
+      } catch (error) {
+        this.checkQrInterruption(execution, error);
         existsInProvider = false;
       }
 
@@ -135,6 +148,7 @@ export class InstanceService {
         );
       }
 
+      execution?.assertActive();
       this.logger.warn(
         `[createInstance] registro órfão encontrado no Hub (id=${existingInstance.id}) sem correspondência no provider — removendo e recriando`,
       );
@@ -144,6 +158,7 @@ export class InstanceService {
       // (evita falso "criar" após delete dessincronizado no passado).
       const adapterForCheck = this.adapterResolver.resolve(product.adapterType);
       try {
+        execution?.assertActive();
         const providerInstances = await adapterForCheck.fetchInstances(ctx);
         const existsInProvider = providerInstances.some(
           (i) => i.instanceName === dto.instanceName,
@@ -154,15 +169,26 @@ export class InstanceService {
           );
         }
       } catch (err) {
+        this.checkQrInterruption(execution, err);
         if (err instanceof ConflictException) throw err;
         this.logger.warn(
-          `[createInstance] não foi possível verificar existência no provider antes de criar — prosseguindo. error=${extractErrorDetail(err)}`,
+          `[createInstance] não foi possível verificar existência no provider antes de criar — prosseguindo. error=${execution ? 'provider_lookup_failed' : extractErrorDetail(err)}`,
         );
       }
     }
 
     const adapter = this.adapterResolver.resolve(product.adapterType);
-    const result = await adapter.createInstance(ctx, dto);
+    execution?.assertActive();
+    let result: InstanceCreatedDto;
+    try {
+      result = await adapter.createInstance(ctx, dto);
+    } catch (error) {
+      if (execution)
+        this.logger.warn(
+          `[qr:create] resultado remoto não confirmado. productId=${product.productId} providerId=${provider.id}`,
+        );
+      throw error;
+    }
 
     const instance = await this.prisma.instance.create({
       data: {
@@ -175,6 +201,12 @@ export class InstanceService {
         status: 'disconnected',
       },
     });
+    if (execution) execution.instanceId = instance.id;
+    if (execution?.signal.aborted)
+      this.logger.warn(
+        `[qr:create] vínculo preservado após interrupção. instanceId=${instance.id}`,
+      );
+    execution?.assertActive();
 
     const response: InstanceCreatedDto & { hubId: string } & Record<
         string,
@@ -185,12 +217,8 @@ export class InstanceService {
     };
 
     if (adapter.applyInstanceDefaults) {
-      let defaultWebhook: Awaited<
-        ReturnType<typeof this.prisma.productDefaultWebhook.findUnique>
-      > | null = null;
-      let defaultProxy: Awaited<
-        ReturnType<typeof this.prisma.productDefaultProxy.findUnique>
-      > | null = null;
+      let defaultWebhook: ProductDefaultWebhook | null = null;
+      let defaultProxy: ProductDefaultProxy | null = null;
 
       try {
         [defaultWebhook, defaultProxy] = await Promise.all([
@@ -211,6 +239,7 @@ export class InstanceService {
 
       if (hasDefaults) {
         try {
+          execution?.assertActive();
           const applied = await adapter.applyInstanceDefaults(
             ctx,
             dto.instanceName,
@@ -243,6 +272,27 @@ export class InstanceService {
           if (applied.webhook !== undefined) response.webhook = applied.webhook;
           if (applied.proxy !== undefined) response.proxy = applied.proxy;
         } catch (err) {
+          if (execution) {
+            this.logger.warn(
+              `[qr:defaults] configuração incompleta; vínculo preservado até confirmação de compensação. instanceId=${instance.id}`,
+            );
+            this.checkQrInterruption(execution, err);
+            try {
+              execution.assertActive();
+              await adapter.deleteInstance(ctx, dto.instanceName);
+              await this.prisma.instance.deleteMany({
+                where: { id: instance.id },
+              });
+            } catch (deleteErr) {
+              this.checkQrInterruption(execution, deleteErr);
+              throw new BadGatewayException(
+                'Falha ao reverter configurações padrão; registro mantido para verificação',
+              );
+            }
+            throw new BadRequestException(
+              'Falha ao aplicar configurações padrão — operação revertida.',
+            );
+          }
           const errMsg = extractErrorDetail(err);
           const errFull =
             err instanceof HttpException
@@ -271,7 +321,22 @@ export class InstanceService {
       }
     }
 
+    execution?.assertActive();
     return response;
+  }
+
+  private checkQrInterruption(
+    execution: QrRequestContext | undefined,
+    error: unknown,
+  ): void {
+    if (!execution) return;
+    execution.assertActive();
+    if (
+      error instanceof QrTimeoutException ||
+      (error instanceof HttpException &&
+        (error.getStatus() === 408 || error.getStatus() === 504))
+    )
+      throw error;
   }
 
   async listInstances(
@@ -366,7 +431,9 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     const raw = await adapter.fetchInstance(ctx, resolved.instanceName);
-    const payload = Array.isArray(raw) ? (raw[0] ?? {}) : raw;
+    const payload = Array.isArray(raw)
+      ? ((raw[0] as InstanceDto | undefined) ?? {})
+      : raw;
 
     return {
       ...payload,
@@ -377,7 +444,10 @@ export class InstanceService {
   async connectInstance(
     product: AuthCachePayload,
     instanceId: string,
+    execution?: QrRequestContext,
   ): Promise<ConnectInstanceDto> {
+    execution?.assertActive();
+    if (execution) execution.productId = product.productId;
     const resolved = await this.instanceResolver.resolveById(
       product.productId,
       instanceId,
@@ -385,7 +455,13 @@ export class InstanceService {
     const ctx: ProviderContext = {
       providerUrl: resolved.providerUrl,
       providerApiKey: resolved.providerApiKey,
+      ...(execution ? { execution } : {}),
     };
+    if (execution) {
+      execution.providerId = resolved.vpsProviderId;
+      execution.instanceId = resolved.instanceId;
+      execution.assertActive();
+    }
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     return adapter.connectInstance(ctx, resolved.instanceName);
   }

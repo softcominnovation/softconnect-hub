@@ -1,6 +1,9 @@
+import type { QrRequestContext } from '../common/qr-request-context';
+
 export interface ProviderContext {
   providerUrl: string;
   providerApiKey: string;
+  execution?: QrRequestContext;
 }
 
 // --- Instance DTOs ---

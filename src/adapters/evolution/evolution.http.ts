@@ -9,6 +9,15 @@ import axios, { AxiosInstance } from 'axios';
 import * as http from 'http';
 import * as https from 'https';
 import { AppConfig } from '../../config/config.schema';
+import {
+  QrRequestContext,
+  QrTimeoutException,
+} from '../../common/qr-request-context';
+
+export interface QrHttpOptions {
+  execution: QrRequestContext;
+  primary?: boolean;
+}
 
 type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
@@ -99,7 +108,10 @@ export class EvolutionHttpService {
     path: string,
     data?: unknown,
     params?: Record<string, string>,
+    qr?: QrHttpOptions,
   ): Promise<T> {
+    if (qr)
+      return this.requestQr<T>(method, vpsUrl, apiKey, path, data, params, qr);
     this.checkCircuit(vpsUrl);
 
     const maxRetries = this.config.get('PROXY_MAX_RETRIES', { infer: true });
@@ -133,5 +145,70 @@ export class EvolutionHttpService {
 
     this.recordFailure(vpsUrl);
     throw lastError ?? new Error('Unknown error');
+  }
+
+  private async requestQr<T>(
+    method: 'get' | 'post' | 'put' | 'delete',
+    vpsUrl: string,
+    apiKey: string,
+    path: string,
+    data: unknown,
+    params: Record<string, string> | undefined,
+    { execution, primary }: QrHttpOptions,
+  ): Promise<T> {
+    const limit = primary
+      ? execution.providerTimeoutMs
+      : this.config.get('PROXY_TIMEOUT_MS', { infer: true });
+    const timeoutMs = execution.callTimeout(limit);
+    execution.failureSource = undefined;
+    try {
+      this.checkCircuit(vpsUrl);
+    } catch (error) {
+      execution.failureSource = 'circuit_open';
+      throw error;
+    }
+    const reason = timeoutMs < limit ? 'request_timeout' : 'provider_timeout';
+    const timer = setTimeout(() => execution.abort(reason), timeoutMs);
+    execution.calls += 1;
+
+    try {
+      const response = await this.client.request<T>({
+        method,
+        url: `${vpsUrl}${path}`,
+        headers: { apikey: apiKey },
+        params,
+        data: method !== 'get' && method !== 'delete' ? data : undefined,
+        timeout: timeoutMs,
+        signal: execution.signal,
+      });
+      execution.assertActive();
+      this.recordSuccess(vpsUrl);
+      return response.data;
+    } catch (error) {
+      if (
+        !execution.signal.aborted &&
+        axios.isAxiosError(error) &&
+        !error.response &&
+        (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT')
+      ) {
+        execution.abort(reason);
+      }
+      if (execution.reason) {
+        if (execution.reason === 'provider_timeout') this.recordFailure(vpsUrl);
+        throw new QrTimeoutException(execution.reason);
+      }
+      if (axios.isAxiosError(error) && error.response) {
+        execution.failureSource = 'upstream_http';
+        throw new HttpException(
+          error.response.data as Record<string, unknown>,
+          error.response.status,
+        );
+      }
+      execution.failureSource = 'transport_error';
+      this.recordFailure(vpsUrl);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }

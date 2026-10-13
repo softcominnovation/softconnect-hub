@@ -24,6 +24,11 @@ import { CreateInstanceDto } from '../../instance/dto/create-instance.dto';
 import { SendPresenceDto, SendTextDto } from '../../message/dto/message.dto';
 import { AdminInstancesService } from './admin-instances.service';
 import {
+  QrExecution,
+  QrTimeout,
+} from '../../../common/decorators/qr-timeout.decorator';
+import type { QrRequestContext } from '../../../common/qr-request-context';
+import {
   ImportEvolutionInstanceDto,
   ImportBulkResultDto,
 } from './dto/import-evolution-instance.dto';
@@ -36,6 +41,7 @@ export class AdminInstancesController {
   constructor(private readonly service: AdminInstancesService) {}
 
   @Post()
+  @QrTimeout('create')
   @ApiOperation({ summary: 'Criar instância em nome de um produto' })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
   @ApiBody({ type: CreateInstanceDto })
@@ -47,8 +53,9 @@ export class AdminInstancesController {
   create(
     @Param('productId') productId: string,
     @Body() dto: CreateInstanceDto,
+    @QrExecution() execution?: QrRequestContext,
   ) {
-    return this.service.createInstance(productId, dto);
+    return this.service.createInstance(productId, dto, execution);
   }
 
   @Get()
@@ -123,6 +130,7 @@ export class AdminInstancesController {
   }
 
   @Get(':instanceId/connect')
+  @QrTimeout('connect')
   @ApiOperation({
     summary: 'Conectar instância — retorna QR code ou state:open',
   })
@@ -136,8 +144,9 @@ export class AdminInstancesController {
   connect(
     @Param('productId') productId: string,
     @Param('instanceId') instanceId: string,
+    @QrExecution() execution?: QrRequestContext,
   ) {
-    return this.service.connectInstance(productId, instanceId);
+    return this.service.connectInstance(productId, instanceId, execution);
   }
 
   @Get(':instanceId/status')
@@ -195,15 +204,17 @@ export class AdminInstancesController {
   @ApiOperation({ summary: 'Deletar instância' })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
-  @ApiResponse({ status: 204, description: 'Instância deletada no provider e no Hub' })
+  @ApiResponse({
+    status: 204,
+    description: 'Instância deletada no provider e no Hub',
+  })
   @ApiResponse({
     status: 404,
     description: 'Produto ou instância não encontrado',
   })
   @ApiResponse({
     status: 502,
-    description:
-      'Falha ao deletar no provider — registro no Hub mantido',
+    description: 'Falha ao deletar no provider — registro no Hub mantido',
   })
   delete(
     @Param('productId') productId: string,

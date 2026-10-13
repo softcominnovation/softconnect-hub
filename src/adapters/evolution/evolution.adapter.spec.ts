@@ -1,5 +1,6 @@
 import { EvolutionAdapter } from './evolution.adapter';
 import { EvolutionHttpService } from './evolution.http';
+import { QrRequestContext } from '../../common/qr-request-context';
 
 function makeHttp(): jest.Mocked<EvolutionHttpService> {
   return {
@@ -41,6 +42,8 @@ describe('EvolutionAdapter', () => {
         CTX.providerApiKey,
         '/instance/create',
         { ...dto, integration: 'WHATSAPP-BAILEYS' },
+        undefined,
+        undefined,
       );
       expect(result).toEqual({
         instanceName: INSTANCE,
@@ -70,6 +73,8 @@ describe('EvolutionAdapter', () => {
         CTX.providerApiKey,
         '/instance/create',
         { ...dto, integration: 'WHATSAPP-BUSINESS' },
+        undefined,
+        undefined,
       );
       expect(result).toEqual({
         instanceName: INSTANCE,
@@ -97,6 +102,9 @@ describe('EvolutionAdapter', () => {
         CTX.providerUrl,
         CTX.providerApiKey,
         '/instance/fetchInstances',
+        undefined,
+        undefined,
+        undefined,
       );
       expect(result[0]).toMatchObject({
         instanceName: INSTANCE,
@@ -156,6 +164,9 @@ describe('EvolutionAdapter', () => {
         CTX.providerUrl,
         CTX.providerApiKey,
         `/instance/connect/${INSTANCE}`,
+        undefined,
+        undefined,
+        undefined,
       );
       expect(result).toBe(expected);
     });
@@ -205,6 +216,9 @@ describe('EvolutionAdapter', () => {
         CTX.providerUrl,
         CTX.providerApiKey,
         `/instance/delete/${INSTANCE}`,
+        undefined,
+        undefined,
+        undefined,
       );
     });
   });
@@ -357,6 +371,8 @@ describe('EvolutionAdapter', () => {
             base64: true,
           },
         },
+        undefined,
+        undefined,
       );
     });
 
@@ -450,6 +466,32 @@ describe('EvolutionAdapter', () => {
   });
 
   describe('ProviderContext isolation', () => {
+    it('propagates one QR context to both defaults and compensation, only as internal options', async () => {
+      const execution = new QrRequestContext(60000, 50000);
+      const ctx = { ...CTX, execution };
+      http.request.mockResolvedValue({ enabled: true });
+      await adapter.applyInstanceDefaults(ctx, INSTANCE, {
+        webhook: { enabled: true, url: 'https://fixture.invalid/webhook' },
+        proxy: {
+          enabled: true,
+          host: 'fixture.invalid',
+          port: '8080',
+          protocol: 'http',
+        },
+      });
+      await adapter.deleteInstance(ctx, INSTANCE);
+      expect(http.request.mock.calls.map((call) => call[3])).toEqual([
+        `/webhook/set/${INSTANCE}`,
+        `/proxy/set/${INSTANCE}`,
+        `/instance/delete/${INSTANCE}`,
+      ]);
+      for (const call of http.request.mock.calls) {
+        expect(call[6]).toEqual({ execution });
+        expect(call[5]).toBeUndefined();
+        expect(JSON.stringify(call.slice(0, 6))).not.toContain('execution');
+      }
+    });
+
     it('passes different ProviderContext per call without state leakage', async () => {
       const CTX_A = {
         providerUrl: 'http://vps-a.test:8080',
@@ -470,6 +512,9 @@ describe('EvolutionAdapter', () => {
         CTX_A.providerUrl,
         CTX_A.providerApiKey,
         '/instance/fetchInstances',
+        undefined,
+        undefined,
+        undefined,
       );
       expect(http.request).toHaveBeenNthCalledWith(
         2,
@@ -477,6 +522,9 @@ describe('EvolutionAdapter', () => {
         CTX_B.providerUrl,
         CTX_B.providerApiKey,
         '/instance/fetchInstances',
+        undefined,
+        undefined,
+        undefined,
       );
     });
   });
