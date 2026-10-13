@@ -4,7 +4,8 @@ import {
   Injectable,
   NestInterceptor,
 } from '@nestjs/common';
-import { Observable, tap } from 'rxjs';
+import { finalize, Observable, tap } from 'rxjs';
+import type { QrRequestContext } from '../common/qr-request-context';
 import { AuthCachePayload } from '../auth/apikey.guard';
 import { AuditService } from './audit.service';
 
@@ -15,6 +16,7 @@ interface FastifyRequest {
   ip: string;
   product?: AuthCachePayload;
   resolvedInstanceId?: string;
+  qrExecution?: QrRequestContext;
 }
 
 interface FastifyReply {
@@ -31,6 +33,24 @@ export class AuditInterceptor implements NestInterceptor {
     const reply = context.switchToHttp().getResponse<FastifyReply>();
 
     const startTime = Date.now();
+
+    if (request.qrExecution) {
+      const execution = request.qrExecution;
+      return next.handle().pipe(
+        finalize(() => {
+          if (!execution.outcome) return;
+          request.resolvedInstanceId = execution.instanceId;
+          this.record(
+            request,
+            execution.outcome.statusCode,
+            startTime,
+            execution.outcome.source === 'success'
+              ? undefined
+              : execution.outcome.source,
+          );
+        }),
+      );
+    }
 
     return next.handle().pipe(
       tap({

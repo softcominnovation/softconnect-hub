@@ -11,6 +11,7 @@ import { MessageService } from '../../message/message.service';
 import { EvolutionHttpService } from '../../../adapters/evolution/evolution.http';
 import { decryptAES256GCM } from '../../../common/crypto.util';
 import { ConfigService } from '@nestjs/config';
+import type { QrRequestContext } from '../../../common/qr-request-context';
 import type {
   ConnectInstanceDto,
   ConnectionStateDto,
@@ -78,9 +79,10 @@ export class AdminInstancesService {
   async createInstance(
     productId: string,
     dto: CreateInstanceDto,
+    execution?: QrRequestContext,
   ): Promise<InstanceCreatedDto & { hubId: string }> {
     const payload = await this.buildPayload(productId);
-    return this.instanceService.createInstance(payload, dto);
+    return this.instanceService.createInstance(payload, dto, execution);
   }
 
   async listInstances(
@@ -102,9 +104,10 @@ export class AdminInstancesService {
   async connectInstance(
     productId: string,
     instanceId: string,
+    execution?: QrRequestContext,
   ): Promise<ConnectInstanceDto> {
     const payload = await this.buildPayload(productId);
-    return this.instanceService.connectInstance(payload, instanceId);
+    return this.instanceService.connectInstance(payload, instanceId, execution);
   }
 
   async getConnectionState(
@@ -287,7 +290,8 @@ export class AdminInstancesService {
       select: { id: true, providerUrl: true, providerApiKey: true },
     });
 
-    if (!vps) throw new NotFoundException('VpsProvider nao encontrado ou inativo');
+    if (!vps)
+      throw new NotFoundException('VpsProvider nao encontrado ou inativo');
 
     const decryptedApiKey = decryptAES256GCM(
       vps.providerApiKey,
@@ -480,5 +484,3 @@ export interface HubInstanceDto {
   createdAt: Date;
   updatedAt: Date;
 }
-
-

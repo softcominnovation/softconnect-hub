@@ -7,12 +7,18 @@ import {
   Logger,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
+import { QrTimeoutException } from '../qr-request-context';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost): void {
+    if (
+      exception instanceof QrTimeoutException &&
+      exception.reason === 'client_disconnected'
+    )
+      return;
     if (!(exception instanceof HttpException)) {
       const axiosResponse = (exception as Record<string, unknown>)?.response;
       const axiosData =
@@ -32,15 +38,23 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const status = exception.getStatus();
       const body = exception.getResponse();
 
-      if (typeof body === 'object' && body !== null && !('statusCode' in body)) {
+      if (
+        typeof body === 'object' &&
+        body !== null &&
+        !('statusCode' in body)
+      ) {
         void response.status(status).send(body);
         return;
       }
 
       const message =
-        typeof body === 'string' ? body : (body as Record<string, unknown>).message ?? exception.message;
+        typeof body === 'string'
+          ? body
+          : ((body as Record<string, unknown>).message ?? exception.message);
       const details =
-        typeof body === 'object' ? (body as Record<string, unknown>).message : undefined;
+        typeof body === 'object'
+          ? (body as Record<string, unknown>).message
+          : undefined;
 
       void response.status(status).send({
         statusCode: status,

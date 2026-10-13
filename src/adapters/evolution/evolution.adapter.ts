@@ -50,10 +50,18 @@ export class EvolutionAdapter implements WhatsAppProvider {
         status?: string;
       };
       qrcode?: { base64?: string; code?: string; pairingCode?: string };
-    }>('post', ctx.providerUrl, ctx.providerApiKey, '/instance/create', {
-      ...dto,
-      integration: dto.integration ?? 'WHATSAPP-BAILEYS',
-    });
+    }>(
+      'post',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      '/instance/create',
+      {
+        ...dto,
+        integration: dto.integration ?? 'WHATSAPP-BAILEYS',
+      },
+      undefined,
+      ctx.execution ? { execution: ctx.execution, primary: true } : undefined,
+    );
 
     return {
       instanceName: raw.instance?.instanceName ?? dto.instanceName,
@@ -71,6 +79,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerUrl,
       ctx.providerApiKey,
       '/instance/fetchInstances',
+      undefined,
+      undefined,
+      ctx.execution ? { execution: ctx.execution } : undefined,
     );
 
     const list = Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
@@ -151,7 +162,12 @@ export class EvolutionAdapter implements WhatsAppProvider {
       (inst.status as string | undefined) ||
       'unknown';
 
-    return { ...inst, instanceName: name, id, status } as unknown as InstanceDto;
+    return {
+      ...inst,
+      instanceName: name,
+      id,
+      status,
+    } as unknown as InstanceDto;
   }
 
   connectInstance(
@@ -163,6 +179,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerUrl,
       ctx.providerApiKey,
       `/instance/connect/${instanceName}`,
+      undefined,
+      undefined,
+      ctx.execution ? { execution: ctx.execution, primary: true } : undefined,
     );
   }
 
@@ -211,6 +230,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerUrl,
       ctx.providerApiKey,
       `/instance/delete/${instanceName}`,
+      undefined,
+      undefined,
+      ctx.execution ? { execution: ctx.execution } : undefined,
     );
   }
 
@@ -374,6 +396,8 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerApiKey,
       `/webhook/set/${instanceName}`,
       payload,
+      undefined,
+      ctx.execution ? { execution: ctx.execution } : undefined,
     );
   }
 
@@ -472,6 +496,8 @@ export class EvolutionAdapter implements WhatsAppProvider {
       ctx.providerApiKey,
       `/proxy/set/${instanceName}`,
       dto,
+      undefined,
+      ctx.execution ? { execution: ctx.execution } : undefined,
     );
   }
 

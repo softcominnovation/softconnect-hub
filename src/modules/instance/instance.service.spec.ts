@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   ConflictException,
   HttpException,
   NotFoundException,
@@ -11,6 +12,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
 import { InstanceService } from './instance.service';
+import {
+  QrRequestContext,
+  QrTimeoutException,
+} from '../../common/qr-request-context';
 
 jest.mock('../../common/crypto.util', () => ({
   decryptAES256GCM: jest.fn().mockReturnValue('decrypted-api-key'),
@@ -207,6 +212,163 @@ describe('InstanceService — delete/create sync', () => {
 
       expect(adapter.createInstance).toHaveBeenCalled();
       expect(result.hubId).toBe('hub-2');
+    });
+  });
+
+  describe('create QR — interruption and compensation', () => {
+    const dto = { instanceName: 'fixture-qr', qrcode: true };
+    let execution: QrRequestContext;
+
+    beforeEach(() => {
+      execution = new QrRequestContext(60000, 50000);
+      prisma.vpsProvider.findUnique.mockResolvedValue(PROVIDER_ROW);
+      prisma.instance.findFirst.mockResolvedValue(null);
+      prisma.instance.create.mockResolvedValue({ id: 'hub-qr' });
+      adapter.fetchInstances.mockResolvedValue([]);
+      adapter.createInstance.mockResolvedValue({
+        instanceId: 'remote-qr',
+        instanceName: dto.instanceName,
+      });
+      adapter.applyInstanceDefaults = jest
+        .fn()
+        .mockResolvedValue({ webhook: { enabled: true } });
+      prisma.productDefaultWebhook.findUnique.mockResolvedValue({
+        enabled: true,
+        url: 'https://fixture.invalid/webhook',
+      });
+      prisma.productDefaultProxy.findUnique.mockResolvedValue(null);
+    });
+
+    it.each([null, INSTANCE_ROW])(
+      'never deletes or creates after a lookup timeout (existing=%p)',
+      async (existing) => {
+        prisma.instance.findFirst.mockResolvedValue(existing);
+        adapter.fetchInstances.mockImplementation(() => {
+          execution.abort('provider_timeout');
+          return Promise.reject(new QrTimeoutException('provider_timeout'));
+        });
+        await expect(
+          service.createInstance(PRODUCT, dto, execution),
+        ).rejects.toMatchObject({ reason: 'provider_timeout' });
+        expect(prisma.instance.delete).not.toHaveBeenCalled();
+        expect(adapter.createInstance).not.toHaveBeenCalled();
+        expect(adapter.deleteInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([408, 504])(
+      'preserves real upstream %s in the lookup without a create',
+      async (status) => {
+        const error = new HttpException({ detail: 'upstream fixture' }, status);
+        adapter.fetchInstances.mockRejectedValue(error);
+        await expect(
+          service.createInstance(PRODUCT, dto, execution),
+        ).rejects.toBe(error);
+        expect(adapter.createInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    it('does not repeat a creation whose remote result is unknown', async () => {
+      adapter.createInstance.mockImplementation(() => {
+        execution.abort('provider_timeout');
+        return Promise.reject(new QrTimeoutException('provider_timeout'));
+      });
+      await expect(
+        service.createInstance(PRODUCT, dto, execution),
+      ).rejects.toBeInstanceOf(QrTimeoutException);
+      expect(adapter.createInstance).toHaveBeenCalledTimes(1);
+      expect(prisma.instance.create).not.toHaveBeenCalled();
+      expect(adapter.deleteInstance).not.toHaveBeenCalled();
+    });
+
+    it('finishes local persistence after confirmed creation even if the caller disconnects', async () => {
+      prisma.instance.create.mockImplementation(() => {
+        execution.abort('client_disconnected');
+        return Promise.resolve({ id: 'hub-qr' });
+      });
+      await expect(
+        service.createInstance(PRODUCT, dto, execution),
+      ).rejects.toMatchObject({ reason: 'client_disconnected' });
+      expect(prisma.instance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            providerInstanceId: 'remote-qr',
+          }) as unknown,
+        }),
+      );
+      expect(execution.instanceId).toBe('hub-qr');
+      expect(adapter.applyInstanceDefaults).not.toHaveBeenCalled();
+      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(adapter.deleteInstance).not.toHaveBeenCalled();
+    });
+
+    it('preserves a known binding after timeout in defaults without rollback', async () => {
+      adapter.applyInstanceDefaults!.mockImplementation(() => {
+        execution.abort('request_timeout');
+        return Promise.reject(new QrTimeoutException('request_timeout'));
+      });
+      await expect(
+        service.createInstance(PRODUCT, dto, execution),
+      ).rejects.toBeInstanceOf(QrTimeoutException);
+      expect(prisma.instance.create).toHaveBeenCalledTimes(1);
+      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(adapter.deleteInstance).not.toHaveBeenCalled();
+    });
+
+    it('compensates functional defaults failure before deleting the local binding', async () => {
+      adapter.applyInstanceDefaults!.mockRejectedValue(
+        new BadRequestException('fixture failure'),
+      );
+      adapter.deleteInstance.mockImplementation(() => {
+        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        return Promise.resolve();
+      });
+      await expect(
+        service.createInstance(PRODUCT, dto, execution),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
+      expect(prisma.instance.deleteMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps local evidence when compensation times out', async () => {
+      adapter.applyInstanceDefaults!.mockRejectedValue(
+        new BadRequestException('fixture failure'),
+      );
+      adapter.deleteInstance.mockImplementation(() => {
+        execution.abort('provider_timeout');
+        return Promise.reject(new QrTimeoutException('provider_timeout'));
+      });
+      await expect(
+        service.createInstance(PRODUCT, dto, execution),
+      ).rejects.toBeInstanceOf(QrTimeoutException);
+      expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
+      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('keeps the successful create body and uses one context for every step', async () => {
+      await expect(
+        service.createInstance(PRODUCT, dto, execution),
+      ).resolves.toEqual({
+        instanceId: 'remote-qr',
+        instanceName: 'fixture-qr',
+        hubId: 'hub-qr',
+        webhook: { enabled: true },
+      });
+      expect(adapter.fetchInstances).toHaveBeenCalledWith(
+        expect.objectContaining({ execution }),
+      );
+      expect(adapter.createInstance).toHaveBeenCalledWith(
+        expect.objectContaining({ execution }),
+        dto,
+      );
+      expect(adapter.applyInstanceDefaults).toHaveBeenCalledWith(
+        expect.objectContaining({ execution }),
+        dto.instanceName,
+        expect.any(Object),
+      );
+      expect(prisma.instance.create).toHaveBeenCalledWith({
+        data: expect.not.objectContaining({ execution }) as unknown,
+      });
     });
   });
 });
