@@ -48,6 +48,18 @@ describe('QR timeout — local HTTP integration', () => {
   let audit: jest.Mock;
   let terminalLog: jest.SpyInstance;
   let values: Record<string, unknown>;
+  let delays: Record<string, number>;
+  let stalledPaths: Set<string>;
+  let prisma: {
+    instance: {
+      findFirst: jest.Mock;
+      create: jest.Mock;
+      delete: jest.Mock;
+      deleteMany: jest.Mock;
+    };
+    productDefaultWebhook: { findUnique: jest.Mock };
+    productDefaultProxy: { findUnique: jest.Mock };
+  };
   const publicConnect = '/api/v1/instance/hub-fixture/connect';
   const adminConnect =
     '/api/v1/admin/products/product-fixture/instances/hub-fixture/connect';
@@ -65,20 +77,32 @@ describe('QR timeout — local HTTP integration', () => {
 
   beforeAll(async () => {
     upstream = createServer((req, res) => {
-      calls.push(req.url ?? '');
+      const path = req.url ?? '';
+      calls.push(path);
       req.resume();
-      if (req.url?.includes('/connect/')) {
+      if (path.includes('/connect/') || stalledPaths.has(path)) {
         res.once('close', onClosed);
         onStarted();
-        if (hang) return;
+        if (hang || stalledPaths.has(path)) return;
       }
-      res.statusCode = responseStatus;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(
-        JSON.stringify(
-          req.url === '/instance/fetchInstances' ? [] : responseBody,
-        ),
-      );
+      const respond = () => {
+        res.statusCode = responseStatus;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify(
+            path === '/instance/fetchInstances'
+              ? []
+              : path.startsWith('/webhook/set/') ||
+                  path.startsWith('/proxy/set/')
+                ? { enabled: true }
+                : responseBody,
+          ),
+        );
+      };
+      if (delays[path]) {
+        const timer = setTimeout(respond, delays[path]);
+        res.once('close', () => clearTimeout(timer));
+      } else respond();
     });
     await new Promise<void>((resolve) =>
       upstream.listen(0, '127.0.0.1', resolve),
@@ -90,6 +114,8 @@ describe('QR timeout — local HTTP integration', () => {
     responseBody = { base64: 'fixture-qr-must-not-be-logged' };
     responseStatus = 200;
     hang = false;
+    delays = {};
+    stalledPaths = new Set();
     calls = [];
     started = new Promise((resolve) => {
       onStarted = resolve;
@@ -109,6 +135,16 @@ describe('QR timeout — local HTTP integration', () => {
       CIRCUIT_BREAKER_THRESHOLD: 5,
       CIRCUIT_BREAKER_RESET_MS: 30000,
       ENCRYPTION_KEY: 'a'.repeat(64),
+    };
+    prisma = {
+      instance: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'hub-created' }),
+        delete: jest.fn(),
+        deleteMany: jest.fn(),
+      },
+      productDefaultWebhook: { findUnique: jest.fn().mockResolvedValue(null) },
+      productDefaultProxy: { findUnique: jest.fn().mockResolvedValue(null) },
     };
     const module = await Test.createTestingModule({
       controllers: [InstanceController, AdminInstancesController],
@@ -140,16 +176,7 @@ describe('QR timeout — local HTTP integration', () => {
                 adapterType: 'evolution',
               }),
             },
-            instance: {
-              findFirst: jest.fn().mockResolvedValue(null),
-              create: jest.fn().mockResolvedValue({ id: 'hub-created' }),
-            },
-            productDefaultWebhook: {
-              findUnique: jest.fn().mockResolvedValue(null),
-            },
-            productDefaultProxy: {
-              findUnique: jest.fn().mockResolvedValue(null),
-            },
+            ...prisma,
           },
         },
         { provide: CacheService, useValue: {} },
@@ -323,6 +350,134 @@ describe('QR timeout — local HTTP integration', () => {
       '/instance/connectionState/fixture',
     ]);
   });
+
+  it.each([
+    '/api/v1/instance/create',
+    '/api/v1/admin/products/product-fixture/instances',
+  ])(
+    'finishes lookup and both defaults beyond the legacy limit: %s',
+    async (url) => {
+      values.QR_REQUEST_TIMEOUT_MS = 3000;
+      values.QR_PROVIDER_TIMEOUT_MS = 1000;
+      responseBody = {
+        instance: {
+          instanceName: 'fixture',
+          instanceId: 'remote-created',
+          status: 'connecting',
+        },
+        qrcode: { base64: 'fixture-qr-must-not-be-logged' },
+      };
+      prisma.productDefaultWebhook.findUnique.mockResolvedValue({
+        enabled: true,
+        url: 'https://fixture.invalid/webhook',
+      });
+      prisma.productDefaultProxy.findUnique.mockResolvedValue({
+        enabled: true,
+        host: 'fixture.invalid',
+        port: '8080',
+        protocol: 'http',
+        password: 'fixture-proxy-secret',
+      });
+      delays = {
+        '/instance/fetchInstances': 200,
+        '/webhook/set/fixture': 200,
+        '/proxy/set/fixture': 200,
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        payload: { instanceName: 'fixture', qrcode: true },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json<unknown>()).toEqual({
+        instanceName: 'fixture',
+        instanceId: 'remote-created',
+        status: 'connecting',
+        qrcode: { base64: 'fixture-qr-must-not-be-logged' },
+        hubId: 'hub-created',
+        webhook: { enabled: true },
+        proxy: { enabled: true },
+      });
+      expect(calls).toEqual([
+        '/instance/fetchInstances',
+        '/instance/create',
+        '/webhook/set/fixture',
+        '/proxy/set/fixture',
+      ]);
+      expect(prisma.instance.create).toHaveBeenCalledTimes(1);
+      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      const log = JSON.parse(
+        String((terminalLog.mock.calls as unknown[][])[0][0]),
+      ) as Record<string, unknown>;
+      expect(log).toMatchObject({
+        timeoutMs: 3000,
+        providerTimeoutMs: 1000,
+        lastOperation: 'proxy',
+        callTimeoutMs: 1000,
+        calls: 4,
+        statusCode: 201,
+      });
+      expect(JSON.stringify(terminalLog.mock.calls)).not.toMatch(
+        /fixture-key|fixture-proxy-secret|fixture-qr-must-not-be-logged|fixture\.invalid/,
+      );
+    },
+  );
+
+  it.each(['lookup', 'proxy'] as const)(
+    'bounds a stalled %s without retry or deletion',
+    async (operation) => {
+      responseBody = {
+        instance: { instanceName: 'fixture', instanceId: 'remote-created' },
+      };
+      prisma.productDefaultProxy.findUnique.mockResolvedValue({
+        enabled: true,
+        host: 'fixture.invalid',
+        port: '8080',
+        protocol: 'http',
+      });
+      stalledPaths.add(
+        operation === 'lookup'
+          ? '/instance/fetchInstances'
+          : '/proxy/set/fixture',
+      );
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/instance/create',
+        payload: { instanceName: 'fixture', qrcode: true },
+      });
+      await closed;
+      expect(response.statusCode).toBe(408);
+      expect(response.json<unknown>()).toEqual({
+        statusCode: 408,
+        error: 'REQUEST_TIMEOUT',
+        message: 'Request timeout',
+      });
+      expect(prisma.instance.create).toHaveBeenCalledTimes(
+        operation === 'lookup' ? 0 : 1,
+      );
+      expect(prisma.instance.delete).not.toHaveBeenCalled();
+      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(calls).toEqual(
+        operation === 'lookup'
+          ? ['/instance/fetchInstances']
+          : [
+              '/instance/fetchInstances',
+              '/instance/create',
+              '/proxy/set/fixture',
+            ],
+      );
+      const log = JSON.parse(
+        String((terminalLog.mock.calls as unknown[][])[0][0]),
+      ) as Record<string, unknown>;
+      expect(log).toMatchObject({
+        lastOperation: operation,
+        callTimeoutMs: 250,
+        source: 'provider_timeout',
+        statusCode: 408,
+      });
+    },
+  );
 
   it('honors a real intermediary that closes after 15 seconds even with the 60-second QR budget', async () => {
     values.QR_REQUEST_TIMEOUT_MS = 60000;

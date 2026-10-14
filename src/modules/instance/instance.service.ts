@@ -6,7 +6,20 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  RequestTimeoutException,
 } from '@nestjs/common';
+import axios from 'axios';
+
+function isProviderTimeoutError(err: unknown): boolean {
+  if (err instanceof HttpException) {
+    return err.getStatus() === 408 || err.getStatus() === 504;
+  }
+  return (
+    axios.isAxiosError(err) &&
+    !err.response &&
+    (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT')
+  );
+}
 
 function extractErrorDetail(err: unknown): string {
   if (err instanceof HttpException) {
@@ -293,6 +306,14 @@ export class InstanceService {
               'Falha ao aplicar configurações padrão — operação revertida.',
             );
           }
+          if (isProviderTimeoutError(err)) {
+            this.logger.warn(
+              `[createInstance] timeout nos defaults; vínculo preservado. instanceId=${instance.id}`,
+            );
+            throw err instanceof HttpException
+              ? err
+              : new RequestTimeoutException('Request timeout');
+          }
           const errMsg = extractErrorDetail(err);
           const errFull =
             err instanceof HttpException
@@ -302,17 +323,27 @@ export class InstanceService {
             `[createInstance] falha ao aplicar defaults — iniciando rollback. productId=${product.productId} instanceName=${dto.instanceName}: ${errFull}`,
           );
 
-          await this.prisma.instance.deleteMany({
-            where: { id: instance.id },
-          });
-
           try {
             await adapter.deleteInstance(ctx, dto.instanceName);
           } catch (deleteErr) {
-            this.logger.warn(
-              `[createInstance] rollback: falha ao deletar instância do provider (pode precisar de limpeza manual): ${(deleteErr as Error).message}`,
-            );
+            if (!isProviderNotFoundError(deleteErr)) {
+              this.logger.warn(
+                `[createInstance] rollback não confirmado; vínculo preservado. instanceId=${instance.id}`,
+              );
+              if (isProviderTimeoutError(deleteErr)) {
+                throw deleteErr instanceof HttpException
+                  ? deleteErr
+                  : new RequestTimeoutException('Request timeout');
+              }
+              throw new BadGatewayException(
+                'Falha ao reverter configurações padrão; registro mantido para verificação',
+              );
+            }
           }
+
+          await this.prisma.instance.deleteMany({
+            where: { id: instance.id },
+          });
 
           throw new BadRequestException(
             `Falha ao aplicar configurações padrão — operação revertida. Detalhe: ${errFull}`,

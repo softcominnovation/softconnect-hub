@@ -60,7 +60,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
         integration: dto.integration ?? 'WHATSAPP-BAILEYS',
       },
       undefined,
-      ctx.execution ? { execution: ctx.execution, primary: true } : undefined,
+      ctx.execution
+        ? { execution: ctx.execution, operation: 'create' }
+        : undefined,
     );
 
     return {
@@ -81,7 +83,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       '/instance/fetchInstances',
       undefined,
       undefined,
-      ctx.execution ? { execution: ctx.execution } : undefined,
+      ctx.execution
+        ? { execution: ctx.execution, operation: 'lookup' }
+        : undefined,
     );
 
     const list = Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
@@ -181,7 +185,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       `/instance/connect/${instanceName}`,
       undefined,
       undefined,
-      ctx.execution ? { execution: ctx.execution, primary: true } : undefined,
+      ctx.execution
+        ? { execution: ctx.execution, operation: 'connect' }
+        : undefined,
     );
   }
 
@@ -232,7 +238,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       `/instance/delete/${instanceName}`,
       undefined,
       undefined,
-      ctx.execution ? { execution: ctx.execution } : undefined,
+      ctx.execution
+        ? { execution: ctx.execution, operation: 'delete' }
+        : undefined,
     );
   }
 
@@ -397,7 +405,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       `/webhook/set/${instanceName}`,
       payload,
       undefined,
-      ctx.execution ? { execution: ctx.execution } : undefined,
+      ctx.execution
+        ? { execution: ctx.execution, operation: 'webhook' }
+        : undefined,
     );
   }
 
@@ -497,7 +507,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       `/proxy/set/${instanceName}`,
       dto,
       undefined,
-      ctx.execution ? { execution: ctx.execution } : undefined,
+      ctx.execution
+        ? { execution: ctx.execution, operation: 'proxy' }
+        : undefined,
     );
   }
 

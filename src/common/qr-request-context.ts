@@ -7,6 +7,14 @@ export type QrStopReason =
   | 'provider_timeout'
   | 'client_disconnected';
 
+export type QrOperation =
+  | 'lookup'
+  | 'create'
+  | 'connect'
+  | 'webhook'
+  | 'proxy'
+  | 'delete';
+
 export class QrTimeoutException extends RequestTimeoutException {
   constructor(readonly reason: QrStopReason) {
     super('Request timeout');
@@ -24,6 +32,8 @@ export class QrRequestContext {
   instanceId?: string;
   productId?: string;
   calls = 0;
+  lastOperation?: QrOperation;
+  callTimeoutMs?: number;
 
   constructor(
     readonly timeoutMs: number,

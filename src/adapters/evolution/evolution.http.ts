@@ -12,11 +12,12 @@ import { AppConfig } from '../../config/config.schema';
 import {
   QrRequestContext,
   QrTimeoutException,
+  QrOperation,
 } from '../../common/qr-request-context';
 
 export interface QrHttpOptions {
   execution: QrRequestContext;
-  primary?: boolean;
+  operation: QrOperation;
 }
 
 type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
@@ -154,11 +155,9 @@ export class EvolutionHttpService {
     path: string,
     data: unknown,
     params: Record<string, string> | undefined,
-    { execution, primary }: QrHttpOptions,
+    { execution, operation }: QrHttpOptions,
   ): Promise<T> {
-    const limit = primary
-      ? execution.providerTimeoutMs
-      : this.config.get('PROXY_TIMEOUT_MS', { infer: true });
+    const limit = execution.providerTimeoutMs;
     const timeoutMs = execution.callTimeout(limit);
     execution.failureSource = undefined;
     try {
@@ -170,6 +169,8 @@ export class EvolutionHttpService {
     const reason = timeoutMs < limit ? 'request_timeout' : 'provider_timeout';
     const timer = setTimeout(() => execution.abort(reason), timeoutMs);
     execution.calls += 1;
+    execution.lastOperation = operation;
+    execution.callTimeoutMs = timeoutMs;
 
     try {
       const response = await this.client.request<T>({

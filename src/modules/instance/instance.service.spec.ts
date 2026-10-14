@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AxiosError } from 'axios';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CacheService } from '../../cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -302,18 +303,21 @@ describe('InstanceService — delete/create sync', () => {
       expect(adapter.deleteInstance).not.toHaveBeenCalled();
     });
 
-    it('preserves a known binding after timeout in defaults without rollback', async () => {
-      adapter.applyInstanceDefaults!.mockImplementation(() => {
-        execution.abort('request_timeout');
-        return Promise.reject(new QrTimeoutException('request_timeout'));
-      });
-      await expect(
-        service.createInstance(PRODUCT, dto, execution),
-      ).rejects.toBeInstanceOf(QrTimeoutException);
-      expect(prisma.instance.create).toHaveBeenCalledTimes(1);
-      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
-      expect(adapter.deleteInstance).not.toHaveBeenCalled();
-    });
+    it.each(['request_timeout', 'provider_timeout'] as const)(
+      'preserves a known binding after %s in defaults without rollback',
+      async (reason) => {
+        adapter.applyInstanceDefaults!.mockImplementation(() => {
+          execution.abort(reason);
+          return Promise.reject(new QrTimeoutException(reason));
+        });
+        await expect(
+          service.createInstance(PRODUCT, dto, execution),
+        ).rejects.toBeInstanceOf(QrTimeoutException);
+        expect(prisma.instance.create).toHaveBeenCalledTimes(1);
+        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(adapter.deleteInstance).not.toHaveBeenCalled();
+      },
+    );
 
     it('compensates functional defaults failure before deleting the local binding', async () => {
       adapter.applyInstanceDefaults!.mockRejectedValue(
@@ -370,5 +374,96 @@ describe('InstanceService — delete/create sync', () => {
         data: expect.not.objectContaining({ execution }) as unknown,
       });
     });
+  });
+
+  describe('legacy create — preserve binding on timeout or uncertain rollback', () => {
+    const dto = { instanceName: 'fixture-legacy', qrcode: false };
+
+    beforeEach(() => {
+      prisma.vpsProvider.findUnique.mockResolvedValue(PROVIDER_ROW);
+      prisma.instance.findFirst.mockResolvedValue(null);
+      adapter.fetchInstances.mockResolvedValue([]);
+      adapter.createInstance.mockResolvedValue({
+        instanceId: 'remote-created',
+      });
+      prisma.instance.create.mockResolvedValue({ id: 'hub-created' });
+      prisma.productDefaultProxy.findUnique.mockResolvedValue({
+        enabled: true,
+      });
+      adapter.applyInstanceDefaults = jest.fn();
+    });
+
+    it.each(['ECONNABORTED', 'ETIMEDOUT'])(
+      'preserves a confirmed create after local defaults timeout %s',
+      async (code) => {
+        adapter.applyInstanceDefaults!.mockRejectedValue(
+          new AxiosError('timeout fixture', code),
+        );
+        await expect(
+          service.createInstance(PRODUCT, dto),
+        ).rejects.toMatchObject({
+          status: 408,
+          message: 'Request timeout',
+        });
+        expect(prisma.instance.create).toHaveBeenCalledTimes(1);
+        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(adapter.deleteInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([408, 504])(
+      'preserves upstream HTTP %s and the local binding',
+      async (status) => {
+        const error = new HttpException(
+          { message: 'upstream timeout fixture' },
+          status,
+        );
+        adapter.applyInstanceDefaults!.mockRejectedValue(error);
+        await expect(service.createInstance(PRODUCT, dto)).rejects.toBe(error);
+        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(adapter.deleteInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([false, true])(
+      'removes the binding only after confirmed remote compensation (absent=%s)',
+      async (absent) => {
+        adapter.applyInstanceDefaults!.mockRejectedValue(
+          new BadRequestException('invalid default fixture'),
+        );
+        adapter.deleteInstance.mockImplementation(() => {
+          expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+          return absent
+            ? Promise.reject(new NotFoundException())
+            : Promise.resolve();
+        });
+        await expect(
+          service.createInstance(PRODUCT, dto),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
+        expect(prisma.instance.deleteMany).toHaveBeenCalledWith({
+          where: { id: 'hub-created' },
+        });
+      },
+    );
+
+    it.each([
+      [new AxiosError('timeout fixture', 'ECONNABORTED'), 408],
+      [new HttpException('upstream timeout fixture', 504), 504],
+      [new Error('transport fixture'), 502],
+    ] as const)(
+      'keeps the binding after uncertain compensation: %s',
+      async (error, status) => {
+        adapter.applyInstanceDefaults!.mockRejectedValue(
+          new BadRequestException('invalid default fixture'),
+        );
+        adapter.deleteInstance.mockRejectedValue(error);
+        await expect(
+          service.createInstance(PRODUCT, dto),
+        ).rejects.toMatchObject({ status });
+        expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
+        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      },
+    );
   });
 });

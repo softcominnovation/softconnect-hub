@@ -485,8 +485,12 @@ describe('EvolutionAdapter', () => {
         `/proxy/set/${INSTANCE}`,
         `/instance/delete/${INSTANCE}`,
       ]);
+      expect(http.request.mock.calls.map((call) => call[6])).toEqual([
+        { execution, operation: 'webhook' },
+        { execution, operation: 'proxy' },
+        { execution, operation: 'delete' },
+      ]);
       for (const call of http.request.mock.calls) {
-        expect(call[6]).toEqual({ execution });
         expect(call[5]).toBeUndefined();
         expect(JSON.stringify(call.slice(0, 6))).not.toContain('execution');
       }

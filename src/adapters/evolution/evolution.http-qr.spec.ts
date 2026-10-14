@@ -5,6 +5,7 @@ import { AppConfig } from '../../config/config.schema';
 import {
   QrRequestContext,
   QrTimeoutException,
+  QrOperation,
 } from '../../common/qr-request-context';
 import { EvolutionHttpService } from './evolution.http';
 
@@ -38,7 +39,10 @@ describe('Evolution HTTP — QR policy', () => {
   });
   afterEach(() => jest.useRealTimers());
 
-  function call(execution?: QrRequestContext, primary = true) {
+  function call(
+    execution?: QrRequestContext,
+    operation: QrOperation = 'connect',
+  ) {
     return service.request(
       'get',
       URL,
@@ -46,7 +50,7 @@ describe('Evolution HTTP — QR policy', () => {
       '/instance/connect/test',
       undefined,
       undefined,
-      execution ? { execution, primary } : undefined,
+      execution ? { execution, operation } : undefined,
     );
   }
 
@@ -63,18 +67,62 @@ describe('Evolution HTTP — QR policy', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  it('bounds auxiliary calls by the legacy timeout and remaining budget', async () => {
-    request.mockResolvedValue({ data: [] });
-    const execution = new QrRequestContext(60000, 50000);
-    await call(execution, false);
-    expect(request).toHaveBeenLastCalledWith(
-      expect.objectContaining({ timeout: 15000 }),
+  it.each(['lookup', 'webhook', 'proxy', 'delete'] as const)(
+    'lets %s finish after 20 seconds and deducts the elapsed budget',
+    async (operation) => {
+      request.mockImplementationOnce(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ data: [] }), 20000),
+          ),
+      );
+      const execution = new QrRequestContext(90000, 80000);
+      const pending = call(execution, operation);
+      await jest.advanceTimersByTimeAsync(20000);
+      await expect(pending).resolves.toEqual([]);
+      expect(request).toHaveBeenLastCalledWith(
+        expect.objectContaining({ timeout: 80000, signal: execution.signal }),
+      );
+      expect(execution.lastOperation).toBe(operation);
+      expect(execution.callTimeoutMs).toBe(80000);
+      expect(execution.signal.aborted).toBe(false);
+
+      request.mockResolvedValue({ data: [] });
+      await call(execution, operation);
+      expect(request).toHaveBeenLastCalledWith(
+        expect.objectContaining({ timeout: 69000 }),
+      );
+      expect(jest.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('cancels a stalled auxiliary at the remaining total budget without retry', async () => {
+    const execution = new QrRequestContext(90000, 80000);
+    jest.advanceTimersByTime(82000);
+    request.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          execution.signal.addEventListener(
+            'abort',
+            () => reject(new AxiosError('cancelled', 'ERR_CANCELED')),
+            { once: true },
+          );
+        }),
     );
-    jest.advanceTimersByTime(52000);
-    await call(execution, false);
+    const pending = call(execution, 'proxy').catch((error: unknown) => error);
+    await jest.advanceTimersByTimeAsync(7000);
+    expect(await pending).toMatchObject({ reason: 'request_timeout' });
     expect(request).toHaveBeenLastCalledWith(
       expect.objectContaining({ timeout: 7000 }),
     );
+    expect(execution.lastOperation).toBe('proxy');
+    expect(execution.callTimeoutMs).toBe(7000);
+    await expect(call(execution, 'delete')).rejects.toBeInstanceOf(
+      QrTimeoutException,
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(service.getCircuitState(URL)).toBe('CLOSED');
+    expect(jest.getTimerCount()).toBe(0);
   });
 
   it('does not retry a transport timeout and counts only one circuit failure', async () => {
