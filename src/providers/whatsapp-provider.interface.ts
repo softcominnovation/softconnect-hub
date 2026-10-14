@@ -238,6 +238,12 @@ export interface InstanceDefaultProxyConfig {
 export interface ApplyInstanceDefaultsResult {
   webhook?: unknown;
   proxy?: unknown;
+  proxyFailure?:
+    | 'timeout'
+    | 'upstream_http'
+    | 'transport_error'
+    | 'circuit_open'
+    | 'budget_exhausted';
 }
 
 // --- Proxy DTOs ---
@@ -371,5 +377,6 @@ export interface WhatsAppProvider {
       webhook?: InstanceDefaultWebhookConfig;
       proxy?: InstanceDefaultProxyConfig;
     },
+    options?: { defaultProxyDeadlineAt: number },
   ): Promise<ApplyInstanceDefaultsResult>;
 }

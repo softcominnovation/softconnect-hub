@@ -529,6 +529,7 @@ export class EvolutionAdapter implements WhatsAppProvider {
       webhook?: InstanceDefaultWebhookConfig;
       proxy?: InstanceDefaultProxyConfig;
     },
+    options?: { defaultProxyDeadlineAt: number },
   ): Promise<ApplyInstanceDefaultsResult> {
     const result: ApplyInstanceDefaultsResult = {};
 
@@ -550,14 +551,24 @@ export class EvolutionAdapter implements WhatsAppProvider {
     if (defaults.proxy) {
       const { enabled, host, port, protocol, username, password } =
         defaults.proxy;
-      result.proxy = await this.setProxy(ctx, instanceName, {
-        enabled: enabled ?? true,
-        host,
-        port,
-        protocol: protocol as 'http' | 'https' | 'socks5',
-        username,
-        password,
-      });
+      Object.assign(
+        result,
+        await this.http.trySetDefaultProxy(
+          ctx.providerUrl,
+          ctx.providerApiKey,
+          instanceName,
+          {
+            enabled: enabled ?? true,
+            host,
+            port,
+            protocol: protocol as 'http' | 'https' | 'socks5',
+            username,
+            password,
+          },
+          ctx.execution,
+          options?.defaultProxyDeadlineAt,
+        ),
+      );
     }
 
     return result;

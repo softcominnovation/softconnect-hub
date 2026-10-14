@@ -10,10 +10,14 @@ import * as http from 'http';
 import * as https from 'https';
 import { AppConfig } from '../../config/config.schema';
 import {
+  QR_FINISH_MARGIN_MS,
   QrRequestContext,
   QrTimeoutException,
   QrOperation,
 } from '../../common/qr-request-context';
+import type { ApplyInstanceDefaultsResult } from '../../providers/whatsapp-provider.interface';
+
+export const INSTANCE_DEFAULT_PROXY_TIMEOUT_MS = 5000;
 
 export interface QrHttpOptions {
   execution: QrRequestContext;
@@ -100,6 +104,78 @@ export class EvolutionHttpService {
 
   getCircuitState(vpsUrl: string): CircuitState {
     return this.getBreaker(vpsUrl).state;
+  }
+
+  async trySetDefaultProxy(
+    vpsUrl: string,
+    apiKey: string,
+    instanceName: string,
+    data: unknown,
+    execution?: QrRequestContext,
+    deadlineAt?: number,
+  ): Promise<ApplyInstanceDefaultsResult> {
+    execution?.assertActive();
+    const remainingMs = execution
+      ? execution.remainingMs
+      : deadlineAt === undefined
+        ? Infinity
+        : deadlineAt - performance.now();
+    const timeoutMs = Math.min(
+      INSTANCE_DEFAULT_PROXY_TIMEOUT_MS,
+      Math.floor(remainingMs - QR_FINISH_MARGIN_MS),
+    );
+    if (timeoutMs <= 0) return { proxyFailure: 'budget_exhausted' };
+
+    // An optional dependency must not open or reset the provider-wide circuit.
+    const breaker = this.getBreaker(vpsUrl);
+    if (
+      breaker.state === 'OPEN' &&
+      Date.now() - (breaker.openedAt ?? 0) < this.resetMs
+    ) {
+      return { proxyFailure: 'circuit_open' };
+    }
+
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    execution?.signal.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    if (execution) {
+      execution.calls += 1;
+      execution.lastOperation = 'proxy';
+      execution.callTimeoutMs = timeoutMs;
+    }
+    try {
+      const response = await this.client.request<unknown>({
+        method: 'post',
+        url: `${vpsUrl}/proxy/set/${instanceName}`,
+        headers: { apikey: apiKey },
+        data,
+        timeout: timeoutMs,
+        signal: controller.signal,
+      });
+      execution?.assertActive();
+      if (controller.signal.aborted) return { proxyFailure: 'timeout' };
+      return { proxy: response.data };
+    } catch (error) {
+      execution?.assertActive();
+      if (
+        controller.signal.aborted ||
+        (axios.isAxiosError(error) &&
+          !error.response &&
+          (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'))
+      ) {
+        return { proxyFailure: 'timeout' };
+      }
+      return {
+        proxyFailure:
+          axios.isAxiosError(error) && error.response
+            ? 'upstream_http'
+            : 'transport_error',
+      };
+    } finally {
+      clearTimeout(timer);
+      execution?.signal.removeEventListener('abort', onAbort);
+    }
   }
 
   async request<T>(

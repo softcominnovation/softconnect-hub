@@ -6,7 +6,7 @@ import {
   NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
-import { createServer, get, Server } from 'node:http';
+import { createServer, get, request as httpRequest, Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { EvolutionAdapter } from '../../adapters/evolution/evolution.adapter';
 import { EvolutionHttpService } from '../../adapters/evolution/evolution.http';
@@ -39,14 +39,17 @@ describe('QR timeout — local HTTP integration', () => {
   let hubUrl: string;
   let responseBody: unknown;
   let responseStatus: number;
+  let responseStatuses: Record<string, number>;
   let hang: boolean;
   let calls: string[];
+  let requestBodies: Record<string, string>;
   let started: Promise<void>;
   let closed: Promise<void>;
   let onStarted: () => void;
   let onClosed: () => void;
   let audit: jest.Mock;
   let terminalLog: jest.SpyInstance;
+  let warningLog: jest.SpyInstance;
   let values: Record<string, unknown>;
   let delays: Record<string, number>;
   let stalledPaths: Set<string>;
@@ -79,6 +82,13 @@ describe('QR timeout — local HTTP integration', () => {
     upstream = createServer((req, res) => {
       const path = req.url ?? '';
       calls.push(path);
+      let body = '';
+      req.on('data', (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        requestBodies[path] = body;
+      });
       req.resume();
       if (path.includes('/connect/') || stalledPaths.has(path)) {
         res.once('close', onClosed);
@@ -86,7 +96,7 @@ describe('QR timeout — local HTTP integration', () => {
         if (hang || stalledPaths.has(path)) return;
       }
       const respond = () => {
-        res.statusCode = responseStatus;
+        res.statusCode = responseStatuses[path] ?? responseStatus;
         res.setHeader('Content-Type', 'application/json');
         res.end(
           JSON.stringify(
@@ -113,10 +123,12 @@ describe('QR timeout — local HTTP integration', () => {
   beforeEach(async () => {
     responseBody = { base64: 'fixture-qr-must-not-be-logged' };
     responseStatus = 200;
+    responseStatuses = {};
     hang = false;
     delays = {};
     stalledPaths = new Set();
     calls = [];
+    requestBodies = {};
     started = new Promise((resolve) => {
       onStarted = resolve;
     });
@@ -126,6 +138,9 @@ describe('QR timeout — local HTTP integration', () => {
     audit = jest.fn();
     terminalLog = jest
       .spyOn(Logger.prototype, 'log')
+      .mockImplementation(() => undefined);
+    warningLog = jest
+      .spyOn(Logger.prototype, 'warn')
       .mockImplementation(() => undefined);
     values = {
       PROXY_TIMEOUT_MS: 100,
@@ -376,6 +391,7 @@ describe('QR timeout — local HTTP integration', () => {
         host: 'fixture.invalid',
         port: '8080',
         protocol: 'http',
+        username: 'fixture-proxy-user',
         password: 'fixture-proxy-secret',
       });
       delays = {
@@ -407,6 +423,17 @@ describe('QR timeout — local HTTP integration', () => {
       ]);
       expect(prisma.instance.create).toHaveBeenCalledTimes(1);
       expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(
+        JSON.parse(requestBodies['/proxy/set/fixture']) as unknown,
+      ).toEqual({
+        enabled: true,
+        host: 'fixture.invalid',
+        port: '8080',
+        protocol: 'http',
+        username: 'fixture-proxy-user',
+        password: 'fixture-proxy-secret',
+      });
+      expect(warningLog).not.toHaveBeenCalled();
       const log = JSON.parse(
         String((terminalLog.mock.calls as unknown[][])[0][0]),
       ) as Record<string, unknown>;
@@ -414,10 +441,11 @@ describe('QR timeout — local HTTP integration', () => {
         timeoutMs: 3000,
         providerTimeoutMs: 1000,
         lastOperation: 'proxy',
-        callTimeoutMs: 1000,
         calls: 4,
         statusCode: 201,
       });
+      expect(log.callTimeoutMs).toBeGreaterThan(1000);
+      expect(log.callTimeoutMs).toBeLessThan(2000);
       expect(JSON.stringify(terminalLog.mock.calls)).not.toMatch(
         /fixture-key|fixture-proxy-secret|fixture-qr-must-not-be-logged|fixture\.invalid/,
       );
@@ -447,12 +475,24 @@ describe('QR timeout — local HTTP integration', () => {
         payload: { instanceName: 'fixture', qrcode: true },
       });
       await closed;
-      expect(response.statusCode).toBe(408);
-      expect(response.json<unknown>()).toEqual({
-        statusCode: 408,
-        error: 'REQUEST_TIMEOUT',
-        message: 'Request timeout',
-      });
+      expect(response.statusCode).toBe(operation === 'lookup' ? 408 : 201);
+      if (operation === 'lookup') {
+        expect(response.json<unknown>()).toEqual({
+          statusCode: 408,
+          error: 'REQUEST_TIMEOUT',
+          message: 'Request timeout',
+        });
+      } else {
+        expect(response.json<unknown>()).toEqual({
+          instanceName: 'fixture',
+          instanceId: 'remote-created',
+          status: 'connecting',
+          hubId: 'hub-created',
+        });
+        expect(warningLog).toHaveBeenCalledWith(
+          expect.stringContaining('instance_default_proxy_unconfirmed'),
+        );
+      }
       expect(prisma.instance.create).toHaveBeenCalledTimes(
         operation === 'lookup' ? 0 : 1,
       );
@@ -472,12 +512,201 @@ describe('QR timeout — local HTTP integration', () => {
       ) as Record<string, unknown>;
       expect(log).toMatchObject({
         lastOperation: operation,
-        callTimeoutMs: 250,
-        source: 'provider_timeout',
-        statusCode: 408,
+        source: operation === 'lookup' ? 'provider_timeout' : 'success',
+        statusCode: operation === 'lookup' ? 408 : 201,
       });
     },
   );
+
+  it.each([
+    ['/api/v1/instance/create', 400],
+    ['/api/v1/admin/products/product-fixture/instances', 504],
+  ] as const)(
+    'returns the created instance and QR despite a default proxy HTTP failure: %s',
+    async (url, status) => {
+      responseBody = {
+        instance: {
+          instanceName: 'fixture',
+          instanceId: 'remote-created',
+          status: 'connecting',
+        },
+        qrcode: { base64: 'fixture-qr-secret' },
+      };
+      responseStatuses['/proxy/set/fixture'] = status;
+      prisma.productDefaultProxy.findUnique.mockResolvedValue({
+        enabled: true,
+        host: 'proxy-secret.invalid',
+        port: '8080',
+        protocol: 'http',
+        password: 'proxy-secret',
+      });
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        payload: { instanceName: 'fixture', qrcode: true },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json<unknown>()).toEqual({
+        instanceName: 'fixture',
+        instanceId: 'remote-created',
+        status: 'connecting',
+        hubId: 'hub-created',
+        qrcode: { base64: 'fixture-qr-secret' },
+      });
+      expect(calls).toEqual([
+        '/instance/fetchInstances',
+        '/instance/create',
+        '/proxy/set/fixture',
+      ]);
+      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(warningLog).toHaveBeenCalledWith(
+        expect.stringContaining('upstream_http'),
+      );
+      expect(
+        JSON.stringify([warningLog.mock.calls, terminalLog.mock.calls]),
+      ).not.toMatch(/proxy-secret|fixture-qr-secret/);
+    },
+  );
+
+  it('limits a real stalled proxy to 5 seconds and preserves the successful admin creation', async () => {
+    values.QR_REQUEST_TIMEOUT_MS = 90000;
+    values.QR_PROVIDER_TIMEOUT_MS = 80000;
+    responseBody = {
+      instance: { instanceName: 'fixture', instanceId: 'remote-created' },
+      qrcode: { base64: 'fixture' },
+    };
+    prisma.productDefaultProxy.findUnique.mockResolvedValue({
+      enabled: true,
+      host: 'fixture.invalid',
+      port: '8080',
+      protocol: 'http',
+    });
+    stalledPaths.add('/proxy/set/fixture');
+    const begin = performance.now();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/products/product-fixture/instances',
+      payload: { instanceName: 'fixture', qrcode: true },
+    });
+    await closed;
+    expect(performance.now() - begin).toBeGreaterThanOrEqual(4900);
+    expect(performance.now() - begin).toBeLessThan(7500);
+    expect(response.statusCode).toBe(201);
+    expect(response.json<unknown>()).toEqual({
+      instanceName: 'fixture',
+      instanceId: 'remote-created',
+      status: 'connecting',
+      hubId: 'hub-created',
+      qrcode: { base64: 'fixture' },
+    });
+    expect(calls).toEqual([
+      '/instance/fetchInstances',
+      '/instance/create',
+      '/proxy/set/fixture',
+    ]);
+    expect(prisma.instance.create).toHaveBeenCalledTimes(1);
+    expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+    expect(terminalLog).toHaveBeenCalledWith(
+      expect.stringContaining('"statusCode":201,"source":"success"'),
+    );
+    expect(terminalLog).toHaveBeenCalledWith(
+      expect.stringContaining('"callTimeoutMs":5000'),
+    );
+  }, 10000);
+
+  it('skips an optional proxy with no legacy budget and keeps the non-QR contract', async () => {
+    responseBody = {
+      instance: { instanceName: 'fixture', instanceId: 'remote-created' },
+    };
+    prisma.productDefaultProxy.findUnique.mockResolvedValue({
+      enabled: true,
+      host: 'fixture.invalid',
+      port: '8080',
+      protocol: 'http',
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/instance/create',
+      payload: { instanceName: 'fixture', qrcode: false },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json<unknown>()).toEqual({
+      instanceName: 'fixture',
+      instanceId: 'remote-created',
+      status: 'connecting',
+      hubId: 'hub-created',
+    });
+    expect(calls).toEqual(['/instance/fetchInstances', '/instance/create']);
+    expect(warningLog).toHaveBeenCalledWith(
+      expect.stringContaining('budget_exhausted'),
+    );
+  });
+
+  it('still propagates mandatory webhook failure before trying the optional proxy', async () => {
+    responseBody = {
+      instance: { instanceName: 'fixture', instanceId: 'remote-created' },
+    };
+    prisma.productDefaultWebhook.findUnique.mockResolvedValue({
+      enabled: true,
+      url: 'https://fixture.invalid',
+    });
+    prisma.productDefaultProxy.findUnique.mockResolvedValue({ enabled: true });
+    responseStatuses['/webhook/set/fixture'] = 400;
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/instance/create',
+      payload: { instanceName: 'fixture', qrcode: true },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(calls).toEqual([
+      '/instance/fetchInstances',
+      '/instance/create',
+      '/webhook/set/fixture',
+      '/instance/delete/fixture',
+    ]);
+    expect(prisma.instance.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels the optional proxy when the real create caller disconnects, preserving the binding', async () => {
+    values.QR_REQUEST_TIMEOUT_MS = 90000;
+    values.QR_PROVIDER_TIMEOUT_MS = 80000;
+    responseBody = {
+      instance: { instanceName: 'fixture', instanceId: 'remote-created' },
+    };
+    prisma.productDefaultProxy.findUnique.mockResolvedValue({
+      enabled: true,
+      host: 'fixture.invalid',
+      port: '8080',
+      protocol: 'http',
+    });
+    stalledPaths.add('/proxy/set/fixture');
+    const caller = httpRequest(`${hubUrl}/api/v1/instance/create`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    caller.on('error', () => undefined);
+    try {
+      caller.end(JSON.stringify({ instanceName: 'fixture', qrcode: true }));
+      await started;
+      caller.destroy();
+      await closed;
+      expect(audit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 499,
+          errorMsg: 'client_disconnected',
+        }),
+      );
+      expect(prisma.instance.create).toHaveBeenCalledTimes(1);
+      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(calls).toEqual([
+        '/instance/fetchInstances',
+        '/instance/create',
+        '/proxy/set/fixture',
+      ]);
+    } finally {
+      caller.destroy();
+    }
+  });
 
   it('honors a real intermediary that closes after 15 seconds even with the 60-second QR budget', async () => {
     values.QR_REQUEST_TIMEOUT_MS = 60000;

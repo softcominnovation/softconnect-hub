@@ -1,10 +1,12 @@
 import { EvolutionAdapter } from './evolution.adapter';
+import { BadRequestException } from '@nestjs/common';
 import { EvolutionHttpService } from './evolution.http';
 import { QrRequestContext } from '../../common/qr-request-context';
 
 function makeHttp(): jest.Mocked<EvolutionHttpService> {
   return {
     request: jest.fn(),
+    trySetDefaultProxy: jest.fn(),
     getCircuitState: jest.fn(),
   } as unknown as jest.Mocked<EvolutionHttpService>;
 }
@@ -470,6 +472,7 @@ describe('EvolutionAdapter', () => {
       const execution = new QrRequestContext(60000, 50000);
       const ctx = { ...CTX, execution };
       http.request.mockResolvedValue({ enabled: true });
+      http.trySetDefaultProxy.mockResolvedValue({ proxy: { enabled: true } });
       await adapter.applyInstanceDefaults(ctx, INSTANCE, {
         webhook: { enabled: true, url: 'https://fixture.invalid/webhook' },
         proxy: {
@@ -482,18 +485,65 @@ describe('EvolutionAdapter', () => {
       await adapter.deleteInstance(ctx, INSTANCE);
       expect(http.request.mock.calls.map((call) => call[3])).toEqual([
         `/webhook/set/${INSTANCE}`,
-        `/proxy/set/${INSTANCE}`,
         `/instance/delete/${INSTANCE}`,
       ]);
       expect(http.request.mock.calls.map((call) => call[6])).toEqual([
         { execution, operation: 'webhook' },
-        { execution, operation: 'proxy' },
         { execution, operation: 'delete' },
       ]);
+      expect(http.trySetDefaultProxy).toHaveBeenCalledWith(
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        INSTANCE,
+        expect.objectContaining({ enabled: true, host: 'fixture.invalid' }),
+        execution,
+        undefined,
+      );
       for (const call of http.request.mock.calls) {
         expect(call[5]).toBeUndefined();
         expect(JSON.stringify(call.slice(0, 6))).not.toContain('execution');
       }
+    });
+
+    it('keeps explicit proxy configuration on the mandatory HTTP path', async () => {
+      const error = new BadRequestException('invalid proxy');
+      http.request.mockRejectedValue(error);
+      await expect(
+        adapter.setProxy(CTX, INSTANCE, {
+          enabled: true,
+          host: 'fixture.invalid',
+          port: '8080',
+          protocol: 'http',
+        }),
+      ).rejects.toBe(error);
+      expect(http.trySetDefaultProxy).not.toHaveBeenCalled();
+    });
+
+    it('preserves a successful webhook when the optional proxy fails', async () => {
+      http.request.mockResolvedValue({ enabled: true });
+      http.trySetDefaultProxy.mockResolvedValue({ proxyFailure: 'timeout' });
+      await expect(
+        adapter.applyInstanceDefaults(
+          CTX,
+          INSTANCE,
+          {
+            webhook: { url: 'https://fixture.invalid' },
+            proxy: { host: 'fixture.invalid', port: '8080', protocol: 'http' },
+          },
+          { defaultProxyDeadlineAt: 12345 },
+        ),
+      ).resolves.toEqual({
+        webhook: { enabled: true },
+        proxyFailure: 'timeout',
+      });
+      expect(http.trySetDefaultProxy).toHaveBeenCalledWith(
+        CTX.providerUrl,
+        CTX.providerApiKey,
+        INSTANCE,
+        expect.any(Object),
+        undefined,
+        12345,
+      );
     });
 
     it('passes different ProviderContext per call without state leakage', async () => {

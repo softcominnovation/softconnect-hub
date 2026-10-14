@@ -107,6 +107,8 @@ export class InstanceService {
     dto: CreateInstanceDto,
     execution?: QrRequestContext,
   ): Promise<InstanceCreatedDto & { hubId: string } & Record<string, unknown>> {
+    const defaultProxyDeadlineAt =
+      performance.now() + this.config.get<number>('PROXY_TIMEOUT_MS', 15000);
     execution?.assertActive();
     if (execution) execution.productId = product.productId;
     if (!product.vpsProviderId) {
@@ -280,10 +282,22 @@ export class InstanceService {
                   }
                 : undefined,
             },
+            { defaultProxyDeadlineAt },
           );
 
           if (applied.webhook !== undefined) response.webhook = applied.webhook;
           if (applied.proxy !== undefined) response.proxy = applied.proxy;
+          if (applied.proxyFailure) {
+            this.logger.warn(
+              JSON.stringify({
+                event: 'instance_default_proxy_unconfirmed',
+                productId: product.productId,
+                providerId: provider.id,
+                instanceId: instance.id,
+                reason: applied.proxyFailure,
+              }),
+            );
+          }
         } catch (err) {
           if (execution) {
             this.logger.warn(

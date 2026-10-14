@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   HttpException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -104,6 +105,7 @@ describe('InstanceService — delete/create sync', () => {
         {
           provide: ConfigService,
           useValue: {
+            get: jest.fn().mockReturnValue(15000),
             getOrThrow: jest.fn().mockReturnValue('a'.repeat(64)),
           },
         },
@@ -369,6 +371,9 @@ describe('InstanceService — delete/create sync', () => {
         expect.objectContaining({ execution }),
         dto.instanceName,
         expect.any(Object),
+        expect.objectContaining({
+          defaultProxyDeadlineAt: expect.any(Number) as unknown,
+        }),
       );
       expect(prisma.instance.create).toHaveBeenCalledWith({
         data: expect.not.objectContaining({ execution }) as unknown,
@@ -387,8 +392,9 @@ describe('InstanceService — delete/create sync', () => {
         instanceId: 'remote-created',
       });
       prisma.instance.create.mockResolvedValue({ id: 'hub-created' });
-      prisma.productDefaultProxy.findUnique.mockResolvedValue({
+      prisma.productDefaultWebhook.findUnique.mockResolvedValue({
         enabled: true,
+        url: 'https://fixture.invalid/webhook',
       });
       adapter.applyInstanceDefaults = jest.fn();
     });
@@ -463,6 +469,63 @@ describe('InstanceService — delete/create sync', () => {
         ).rejects.toMatchObject({ status });
         expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
         expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe('create — optional product proxy', () => {
+    it.each([true, false])(
+      'returns the original creation and logs an unconfirmed proxy without rollback (QR=%s)',
+      async (qrcode) => {
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+        try {
+          prisma.vpsProvider.findUnique.mockResolvedValue(PROVIDER_ROW);
+          prisma.instance.findFirst.mockResolvedValue(null);
+          prisma.instance.create.mockResolvedValue({ id: 'hub-created' });
+          adapter.fetchInstances.mockResolvedValue([]);
+          const created = {
+            instanceName: 'fixture',
+            instanceId: 'remote-created',
+            status: 'connecting',
+            qrcode: { base64: 'qr-secret' },
+          };
+          adapter.createInstance.mockResolvedValue(created);
+          prisma.productDefaultProxy.findUnique.mockResolvedValue({
+            enabled: true,
+            host: 'proxy-secret.invalid',
+            password: 'proxy-secret',
+          });
+          adapter.applyInstanceDefaults = jest.fn().mockResolvedValue({
+            proxyFailure: 'timeout',
+          });
+          const execution = qrcode
+            ? new QrRequestContext(90000, 80000)
+            : undefined;
+          const result = await service.createInstance(
+            PRODUCT,
+            { instanceName: 'fixture', qrcode },
+            execution,
+          );
+          expect(result).toEqual({ ...created, hubId: 'hub-created' });
+          expect(result).not.toHaveProperty('proxyFailure');
+          expect(adapter.deleteInstance).not.toHaveBeenCalled();
+          expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+          expect(warn).toHaveBeenCalledWith(
+            JSON.stringify({
+              event: 'instance_default_proxy_unconfirmed',
+              productId: PRODUCT.productId,
+              providerId: PROVIDER_ROW.id,
+              instanceId: 'hub-created',
+              reason: 'timeout',
+            }),
+          );
+          expect(JSON.stringify(warn.mock.calls)).not.toMatch(
+            /proxy-secret|qr-secret/,
+          );
+          expect(execution?.signal.aborted ?? false).toBe(false);
+        } finally {
+          warn.mockRestore();
+        }
       },
     );
   });
