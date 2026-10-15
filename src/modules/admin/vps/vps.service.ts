@@ -12,6 +12,7 @@ import {
 } from '../../../common/crypto.util';
 import { CacheService } from '../../../cache/cache.service';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { legacyProviderSelect } from '../../../prisma/legacy-selects';
 import { CreateVpsDto } from './dto/create-vps.dto';
 import { UpdateVpsDto } from './dto/update-vps.dto';
 
@@ -64,7 +65,7 @@ export class VpsService {
 
   async findAll(): Promise<DecryptedVps[]> {
     const list = await this.prisma.vpsServer.findMany({
-      include: { providers: true },
+      include: { providers: { select: legacyProviderSelect } },
     });
     return list.map((vps) => this.decrypt(vps));
   }
@@ -73,7 +74,18 @@ export class VpsService {
     await this.assertExists(id);
 
     const key = this.encryptionKey;
-    const data: Record<string, unknown> = { ...dto };
+    const data = {
+      label: dto.label,
+      subdomain: dto.subdomain,
+      ip: dto.ip,
+      managerType: dto.managerType,
+      managerUrl: dto.managerUrl,
+      managerApiKey: dto.managerApiKey,
+      monitorUrl: dto.monitorUrl,
+      monitorApiKey: dto.monitorApiKey,
+      notes: dto.notes,
+      isActive: dto.isActive,
+    };
 
     if (dto.managerApiKey) {
       data.managerApiKey = encryptAES256GCM(dto.managerApiKey, key);

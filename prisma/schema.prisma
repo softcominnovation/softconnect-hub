@@ -21,14 +21,21 @@ model Product {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  vpsProviderId  String?
-  vpsProvider    VpsProvider?         @relation(fields: [vpsProviderId], references: [id])
-  instances      Instance[]
-  webhookConfigs WebhookConfig[]
-  auditLogs      AuditLog[]
-  batchJobs      BatchJob[]
-  defaultWebhook ProductDefaultWebhook?
-  defaultProxy   ProductDefaultProxy?
+  allocationMode            String    @default("legacy")
+  allocationRevision        Int       @default(0)
+  capacityFirstAllocationAt DateTime?
+
+  vpsProviderId    String?
+  vpsProvider      VpsProvider?           @relation(fields: [vpsProviderId], references: [id])
+  instances        Instance[]
+  webhookConfigs   WebhookConfig[]
+  auditLogs        AuditLog[]
+  batchJobs        BatchJob[]
+  defaultWebhook   ProductDefaultWebhook?
+  defaultProxy     ProductDefaultProxy?
+  evolutions       ProductEvolution[]     @relation("ProductEvolutions")
+  defaultEvolution ProductEvolution?      @relation("DefaultEvolution", fields: [id, vpsProviderId], references: [productId, vpsProviderId], onDelete: NoAction, onUpdate: NoAction)
+  provisionings    InstanceProvisioning[]
 }
 
 model ProductDefaultWebhook {
@@ -62,9 +69,9 @@ model ProductDefaultProxy {
 }
 
 model VpsServer {
-  id            String    @id @default(uuid())
+  id            String   @id @default(uuid())
   label         String
-  subdomain     String    @unique
+  subdomain     String   @unique
   ip            String
   managerType   String?
   managerUrl    String?
@@ -72,9 +79,9 @@ model VpsServer {
   monitorUrl    String?
   monitorApiKey String?
   notes         String?
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   providers VpsProvider[]
 }
@@ -92,10 +99,49 @@ model VpsProvider {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  vps          VpsServer    @relation(fields: [vpsId], references: [id])
-  products     Product[]
-  instances    Instance[]
-  healthChecks HealthCheck[]
+  maxInstances           Int?
+  acceptingNewInstances  Boolean   @default(true)
+  configurationRevision  Int       @default(0)
+  canonicalEndpoint      String?
+  identityStatus         String    @default("pending")
+  inventoryStatus        String    @default("unknown")
+  inventoryObservedAt    DateTime?
+  inventoryRevision      Int       @default(0)
+  occupancyRevision      Int       @default(0)
+  callbackTokenEncrypted String?
+  callbackReadiness      String    @default("pending")
+
+  vps                VpsServer                 @relation(fields: [vpsId], references: [id])
+  products           Product[]
+  instances          Instance[]
+  healthChecks       HealthCheck[]
+  productEvolutions  ProductEvolution[]
+  reconciliations    EvolutionReconciliation[]
+  inventoryEntries   EvolutionInventoryEntry[]
+  pendingRelayEvents PendingRelayEvent[]
+  provisionings      InstanceProvisioning[]
+
+  @@index([canonicalEndpoint])
+}
+
+model ProductEvolution {
+  productId             String
+  vpsProviderId         String
+  allocationPriority    Int      @default(0)
+  acceptingNewInstances Boolean  @default(false)
+  configurationRevision Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  product            Product                @relation("ProductEvolutions", fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  vpsProvider        VpsProvider            @relation(fields: [vpsProviderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  defaultForProducts Product[]              @relation("DefaultEvolution")
+  instances          Instance[]
+  provisionings      InstanceProvisioning[]
+
+  @@id([productId, vpsProviderId])
+  @@index([vpsProviderId])
+  @@index([productId, allocationPriority])
 }
 
 model Instance {
@@ -112,13 +158,100 @@ model Instance {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  product     Product     @relation(fields: [productId], references: [id])
-  vpsProvider VpsProvider @relation(fields: [vpsProviderId], references: [id])
-  auditLogs   AuditLog[]
-  batchJobs   BatchJob[]
+  product            Product                @relation(fields: [productId], references: [id])
+  vpsProvider        VpsProvider            @relation(fields: [vpsProviderId], references: [id])
+  auditLogs          AuditLog[]
+  batchJobs          BatchJob[]
+  evolutionLink      ProductEvolution       @relation(fields: [productId, vpsProviderId], references: [productId, vpsProviderId], onDelete: Restrict, onUpdate: Restrict)
+  provisionings      InstanceProvisioning[]
+  pendingRelayEvents PendingRelayEvent[]
 
   @@unique([vpsProviderId, instanceName])
   @@unique([productId, instanceName])
+}
+
+model InstanceProvisioning {
+  id                 String    @id @default(uuid())
+  productId          String
+  vpsProviderId      String
+  linkProductId      String?
+  linkVpsProviderId  String?
+  instanceName       String
+  requestHash        String
+  state              String    @default("reserved")
+  instanceId         String?
+  providerInstanceId String?
+  encryptedRequest   String?
+  leaseOwner         String?
+  leaseExpiresAt     DateTime?
+  revision           Int       @default(0)
+  errorCode          String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  evolutionLink ProductEvolution? @relation(fields: [linkProductId, linkVpsProviderId], references: [productId, vpsProviderId], onDelete: Restrict, onUpdate: Restrict)
+  product       Product           @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  vpsProvider   VpsProvider       @relation(fields: [vpsProviderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  instance      Instance?         @relation(fields: [instanceId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+
+  @@index([state, leaseExpiresAt])
+  @@index([instanceId])
+}
+
+model EvolutionReconciliation {
+  id                        String    @id @default(uuid())
+  vpsProviderId             String
+  status                    String    @default("pending")
+  observedOccupancyRevision Int       @default(0)
+  revision                  Int       @default(0)
+  leaseOwner                String?
+  leaseExpiresAt            DateTime?
+  collectionStartedAt       DateTime?
+  collectionFinishedAt      DateTime?
+  result                    Json?
+  errorCode                 String?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  vpsProvider VpsProvider @relation(fields: [vpsProviderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, leaseExpiresAt])
+  @@index([vpsProviderId, createdAt])
+}
+
+model EvolutionInventoryEntry {
+  vpsProviderId      String
+  identityKey        String
+  instanceName       String
+  providerInstanceId String?
+  status             String?
+  inventoryRevision  Int
+  observedAt         DateTime
+
+  vpsProvider VpsProvider @relation(fields: [vpsProviderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([vpsProviderId, identityKey])
+  @@index([vpsProviderId, instanceName])
+}
+
+model PendingRelayEvent {
+  id                 String    @id @default(uuid())
+  vpsProviderId      String?
+  instanceId         String?
+  instanceName       String?
+  providerInstanceId String?
+  encryptedPayload   String
+  originEvidence     Json?
+  state              String    @default("pending")
+  errorCode          String?
+  receivedAt         DateTime  @default(now())
+  resolvedAt         DateTime?
+
+  vpsProvider VpsProvider? @relation(fields: [vpsProviderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  instance    Instance?    @relation(fields: [instanceId], references: [id], onDelete: SetNull, onUpdate: Restrict)
+
+  @@index([state, receivedAt])
+  @@index([vpsProviderId, instanceName])
 }
 
 model WebhookConfig {

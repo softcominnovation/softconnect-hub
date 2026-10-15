@@ -8,7 +8,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Product, WebhookConfig } from '@prisma/client';
+import { WebhookConfig } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { CacheService } from '../../../cache/cache.service';
@@ -18,6 +18,12 @@ import {
   hashSHA256,
 } from '../../../common/crypto.util';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { ensureEvolutionLink } from '../../../prisma/evolution-links';
+import {
+  LegacyProduct,
+  legacyProduct,
+  legacyProductSelect,
+} from '../../../prisma/legacy-selects';
 import { AdapterResolverService } from '../../../providers/adapter-resolver.service';
 import { ProviderContext } from '../../../providers/whatsapp-provider.interface';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -32,7 +38,7 @@ import {
   SetInstanceDefaultWebhookDto,
 } from './dto/instance-defaults.dto';
 
-type SafeProduct = Omit<Product, 'apiKeyHash'>;
+type SafeProduct = LegacyProduct;
 
 @Injectable()
 export class ProductsService {
@@ -69,21 +75,32 @@ export class ProductsService {
     const apiKeyHash = hashSHA256(apiKey);
 
     try {
-      const product = await this.prisma.product.create({
-        data: {
-          name: dto.name,
-          slug: dto.slug,
-          apiKeyHash,
-          adapterType: dto.adapterType ?? 'evolution',
-          origins: dto.origins ?? [],
-          hubRelay: dto.hubRelay ?? false,
-          vpsProviderId: dto.vpsProviderId ?? null,
-          batchWebhookEnabled: dto.batchWebhookEnabled ?? false,
-          batchWebhookUrl: dto.batchWebhookUrl ?? null,
-        },
+      const product = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.product.create({
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            apiKeyHash,
+            adapterType: dto.adapterType ?? 'evolution',
+            origins: dto.origins ?? [],
+            hubRelay: dto.hubRelay ?? false,
+            vpsProviderId: dto.vpsProviderId ?? null,
+            batchWebhookEnabled: dto.batchWebhookEnabled ?? false,
+            batchWebhookUrl: dto.batchWebhookUrl ?? null,
+          },
+        });
+        if (created.vpsProviderId) {
+          await ensureEvolutionLink(
+            tx,
+            created.id,
+            created.vpsProviderId,
+            true,
+          );
+        }
+        return created;
       });
 
-      return { ...this.stripHash(product), apiKey };
+      return { ...legacyProduct(product), apiKey };
     } catch (err) {
       if (
         err instanceof PrismaClientKnownRequestError &&
@@ -105,40 +122,14 @@ export class ProductsService {
 
   async findAll(): Promise<SafeProduct[]> {
     return this.prisma.product.findMany({
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        adapterType: true,
-        origins: true,
-        hubRelay: true,
-        batchWebhookEnabled: true,
-        batchWebhookUrl: true,
-        isActive: true,
-        vpsProviderId: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: legacyProductSelect,
     });
   }
 
   async findOne(id: string): Promise<SafeProduct> {
     const product = await this.prisma.product.findUnique({
       where: { id },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        adapterType: true,
-        origins: true,
-        hubRelay: true,
-        batchWebhookEnabled: true,
-        batchWebhookUrl: true,
-        isActive: true,
-        vpsProviderId: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: legacyProductSelect,
     });
     if (!product) throw new NotFoundException(`Produto ${id} não encontrado`);
     return product;
@@ -149,13 +140,34 @@ export class ProductsService {
     await this.assertExists(id);
 
     try {
-      const updated = await this.prisma.product.update({
-        where: { id },
-        data: dto,
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.update({
+          where: { id },
+          data: {
+            name: dto.name,
+            slug: dto.slug,
+            adapterType: dto.adapterType,
+            origins: dto.origins,
+            hubRelay: dto.hubRelay,
+            vpsProviderId: dto.vpsProviderId,
+            isActive: dto.isActive,
+            batchWebhookEnabled: dto.batchWebhookEnabled,
+            batchWebhookUrl: dto.batchWebhookUrl,
+          },
+        });
+        if (product.vpsProviderId) {
+          await ensureEvolutionLink(
+            tx,
+            product.id,
+            product.vpsProviderId,
+            product.allocationMode === 'legacy',
+          );
+        }
+        return product;
       });
 
       await this.cache.del(`auth:${updated.apiKeyHash}`);
-      return this.stripHash(updated);
+      return legacyProduct(updated);
     } catch (err) {
       if (
         err instanceof PrismaClientKnownRequestError &&
@@ -178,7 +190,7 @@ export class ProductsService {
     });
 
     await this.cache.del(`auth:${updated.apiKeyHash}`);
-    return this.stripHash(updated);
+    return legacyProduct(updated);
   }
 
   async rotateKey(id: string): Promise<SafeProduct & { apiKey: string }> {
@@ -199,13 +211,7 @@ export class ProductsService {
       data: { apiKeyHash: newApiKeyHash },
     });
 
-    return { ...this.stripHash(updated), apiKey: newApiKey };
-  }
-
-  private stripHash(product: Product): SafeProduct {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { apiKeyHash, ...safe } = product;
-    return safe;
+    return { ...legacyProduct(updated), apiKey: newApiKey };
   }
 
   private async assertExists(id: string): Promise<void> {

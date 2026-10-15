@@ -72,6 +72,7 @@ import { AuthCachePayload } from '../../auth/apikey.guard';
 import { decryptAES256GCM } from '../../common/crypto.util';
 import { CacheService } from '../../cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { createLinkedInstance } from '../../prisma/evolution-links';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
 import {
   ConnectInstanceDto,
@@ -205,16 +206,14 @@ export class InstanceService {
       throw error;
     }
 
-    const instance = await this.prisma.instance.create({
-      data: {
-        productId: product.productId,
-        vpsProviderId: provider.id,
-        instanceName: dto.instanceName,
-        providerInstanceId: result.instanceId ?? null,
-        instanceToken: dto.token,
-        hubToken: `hub_${product.productId}_${dto.instanceName}`,
-        status: 'disconnected',
-      },
+    const instance = await createLinkedInstance(this.prisma, {
+      productId: product.productId,
+      vpsProviderId: provider.id,
+      instanceName: dto.instanceName,
+      providerInstanceId: result.instanceId ?? null,
+      instanceToken: dto.token,
+      hubToken: `hub_${product.productId}_${dto.instanceName}`,
+      status: 'disconnected',
     });
     if (execution) execution.instanceId = instance.id;
     if (execution?.signal.aborted)

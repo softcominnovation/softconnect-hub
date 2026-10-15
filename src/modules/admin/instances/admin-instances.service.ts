@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { createLinkedInstance } from '../../../prisma/evolution-links';
 import { AuthCachePayload } from '../../../auth/apikey.guard';
 import { InstanceService } from '../../instance/instance.service';
 import { MessageService } from '../../message/message.service';
@@ -252,18 +253,16 @@ export class AdminInstancesService {
 
     const status = this.normalizeConnectionStatus(dto.connectionStatus);
 
-    const created = await this.prisma.instance.create({
-      data: {
-        productId,
-        vpsProviderId: product.vpsProviderId,
-        instanceName: dto.name,
-        providerInstanceId: dto.id,
-        instanceToken: dto.token,
-        hubToken: finalHubToken,
-        phoneNumber: dto.number ?? null,
-        status,
-        isActive: true,
-      },
+    const created = await createLinkedInstance(this.prisma, {
+      productId,
+      vpsProviderId: product.vpsProviderId,
+      instanceName: dto.name,
+      providerInstanceId: dto.id,
+      instanceToken: dto.token,
+      hubToken: finalHubToken,
+      phoneNumber: dto.number ?? null,
+      status,
+      isActive: true,
     });
 
     this.logger.log(
@@ -363,18 +362,16 @@ export class AdminInstancesService {
 
         const status = this.normalizeConnectionStatus(evStatus);
 
-        const record = await this.prisma.instance.create({
-          data: {
-            productId,
-            vpsProviderId: vps.id,
-            instanceName: evName,
-            providerInstanceId: evId,
-            instanceToken: evToken || null,
-            hubToken: finalHubToken,
-            phoneNumber: evNumber ?? null,
-            status,
-            isActive: true,
-          },
+        const record = await createLinkedInstance(this.prisma, {
+          productId,
+          vpsProviderId: vps.id,
+          instanceName: evName,
+          providerInstanceId: evId,
+          instanceToken: evToken || null,
+          hubToken: finalHubToken,
+          phoneNumber: evNumber ?? null,
+          status,
+          isActive: true,
         });
 
         created++;

@@ -54,6 +54,9 @@ describe('QR timeout — local HTTP integration', () => {
   let delays: Record<string, number>;
   let stalledPaths: Set<string>;
   let prisma: {
+    $transaction: jest.Mock;
+    product: { findUnique: jest.Mock };
+    productEvolution: { createMany: jest.Mock };
     instance: {
       findFirst: jest.Mock;
       create: jest.Mock;
@@ -152,6 +155,15 @@ describe('QR timeout — local HTTP integration', () => {
       ENCRYPTION_KEY: 'a'.repeat(64),
     };
     prisma = {
+      $transaction: jest.fn((work: (tx: unknown) => unknown) => work(prisma)),
+      product: {
+        findUnique: jest.fn().mockResolvedValue({
+          ...product,
+          id: product.productId,
+          allocationMode: 'legacy',
+        }),
+      },
+      productEvolution: { createMany: jest.fn() },
       instance: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'hub-created' }),
@@ -178,11 +190,6 @@ describe('QR timeout — local HTTP integration', () => {
         {
           provide: PrismaService,
           useValue: {
-            product: {
-              findUnique: jest
-                .fn()
-                .mockResolvedValue({ ...product, id: product.productId }),
-            },
             vpsProvider: {
               findUnique: jest.fn().mockResolvedValue({
                 id: product.vpsProviderId,

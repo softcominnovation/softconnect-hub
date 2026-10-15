@@ -6,13 +6,13 @@ import {
   encryptAES256GCM,
 } from '../../../common/crypto.util';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { canonicalEvolutionEndpoint } from '../../../prisma/evolution-identity';
+import { LegacyProvider, legacyProvider } from '../../../prisma/legacy-selects';
 import { CacheService } from '../../../cache/cache.service';
 import { CreateVpsProviderDto } from './dto/create-vps-provider.dto';
 import { UpdateVpsProviderDto } from './dto/update-vps-provider.dto';
 
-type DecryptedProvider = Omit<VpsProvider, 'providerApiKey'> & {
-  providerApiKey: string;
-};
+type DecryptedProvider = LegacyProvider;
 
 @Injectable()
 export class VpsProviderService {
@@ -34,6 +34,7 @@ export class VpsProviderService {
         vpsId,
         label: dto.label,
         providerUrl: dto.providerUrl,
+        canonicalEndpoint: canonicalEvolutionEndpoint(dto.providerUrl),
         providerApiKey: encryptAES256GCM(dto.providerApiKey, key),
         adapterType: dto.adapterType ?? 'evolution',
       },
@@ -63,7 +64,11 @@ export class VpsProviderService {
     const data: Prisma.VpsProviderUpdateInput = {};
 
     if (dto.label !== undefined) data.label = dto.label;
-    if (dto.providerUrl !== undefined) data.providerUrl = dto.providerUrl;
+    if (dto.providerUrl !== undefined) {
+      data.providerUrl = dto.providerUrl;
+      data.canonicalEndpoint = canonicalEvolutionEndpoint(dto.providerUrl);
+      data.identityStatus = 'pending';
+    }
     if (dto.adapterType !== undefined) data.adapterType = dto.adapterType;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.providerApiKey) {
@@ -98,7 +103,7 @@ export class VpsProviderService {
   private decrypt(provider: VpsProvider): DecryptedProvider {
     const key = this.encryptionKey;
     return {
-      ...provider,
+      ...legacyProvider(provider),
       providerApiKey: decryptAES256GCM(provider.providerApiKey, key),
     };
   }

@@ -56,6 +56,9 @@ const INSTANCE_ROW = {
 describe('InstanceService — delete/create sync', () => {
   let service: InstanceService;
   let prisma: {
+    $transaction: jest.Mock;
+    product: { findUnique: jest.Mock };
+    productEvolution: { createMany: jest.Mock };
     vpsProvider: { findUnique: jest.Mock };
     instance: {
       findFirst: jest.Mock;
@@ -77,6 +80,14 @@ describe('InstanceService — delete/create sync', () => {
 
   beforeEach(async () => {
     prisma = {
+      $transaction: jest.fn((work: (tx: unknown) => unknown) => work(prisma)),
+      product: {
+        findUnique: jest.fn().mockResolvedValue({
+          vpsProviderId: PRODUCT.vpsProviderId,
+          allocationMode: 'legacy',
+        }),
+      },
+      productEvolution: { createMany: jest.fn() },
       vpsProvider: { findUnique: jest.fn() },
       instance: {
         findFirst: jest.fn(),
