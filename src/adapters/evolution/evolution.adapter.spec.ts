@@ -6,7 +6,9 @@ import { QrRequestContext } from '../../common/qr-request-context';
 function makeHttp(): jest.Mocked<EvolutionHttpService> {
   return {
     request: jest.fn(),
-    trySetDefaultProxy: jest.fn(),
+    createOptionalBudget: jest.fn(),
+    tryOptionalRequest: jest.fn(),
+    waitOptional: jest.fn(),
     getCircuitState: jest.fn(),
   } as unknown as jest.Mocked<EvolutionHttpService>;
 }
@@ -471,8 +473,19 @@ describe('EvolutionAdapter', () => {
     it('propagates one QR context to both defaults and compensation, only as internal options', async () => {
       const execution = new QrRequestContext(60000, 50000);
       const ctx = { ...CTX, execution };
+      const budget = { execution, deadlineAt: 1, callLimitMs: 1 };
       http.request.mockResolvedValue({ enabled: true });
-      http.trySetDefaultProxy.mockResolvedValue({ proxy: { enabled: true } });
+      http.createOptionalBudget.mockReturnValue(budget);
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: { enabled: true } })
+        .mockResolvedValueOnce({
+          data: {
+            enabled: true,
+            host: 'fixture.invalid',
+            port: '8080',
+            protocol: 'http',
+          },
+        });
       await adapter.applyInstanceDefaults(ctx, INSTANCE, {
         webhook: { enabled: true, url: 'https://fixture.invalid/webhook' },
         proxy: {
@@ -491,13 +504,26 @@ describe('EvolutionAdapter', () => {
         { execution, operation: 'webhook' },
         { execution, operation: 'delete' },
       ]);
-      expect(http.trySetDefaultProxy).toHaveBeenCalledWith(
-        ctx.providerUrl,
-        ctx.providerApiKey,
-        INSTANCE,
-        expect.objectContaining({ enabled: true, host: 'fixture.invalid' }),
+      expect(http.createOptionalBudget).toHaveBeenCalledWith(
         execution,
         undefined,
+      );
+      expect(http.tryOptionalRequest).toHaveBeenNthCalledWith(
+        1,
+        budget,
+        'post',
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        `/proxy/set/${INSTANCE}`,
+        expect.objectContaining({ enabled: true, host: 'fixture.invalid' }),
+      );
+      expect(http.tryOptionalRequest).toHaveBeenNthCalledWith(
+        2,
+        budget,
+        'get',
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        `/proxy/find/${INSTANCE}`,
       );
       for (const call of http.request.mock.calls) {
         expect(call[5]).toBeUndefined();
@@ -516,12 +542,14 @@ describe('EvolutionAdapter', () => {
           protocol: 'http',
         }),
       ).rejects.toBe(error);
-      expect(http.trySetDefaultProxy).not.toHaveBeenCalled();
+      expect(http.tryOptionalRequest).not.toHaveBeenCalled();
     });
 
     it('preserves a successful webhook when the optional proxy fails', async () => {
+      const budget = { deadlineAt: 12345, callLimitMs: 1 };
       http.request.mockResolvedValue({ enabled: true });
-      http.trySetDefaultProxy.mockResolvedValue({ proxyFailure: 'timeout' });
+      http.createOptionalBudget.mockReturnValue(budget);
+      http.tryOptionalRequest.mockResolvedValue({ failure: 'timeout' });
       await expect(
         adapter.applyInstanceDefaults(
           CTX,
@@ -535,14 +563,21 @@ describe('EvolutionAdapter', () => {
       ).resolves.toEqual({
         webhook: { enabled: true },
         proxyFailure: 'timeout',
+        proxyDiagnostics: {
+          operation: 'set',
+          reads: 0,
+          durationMs: expect.any(Number) as unknown,
+        },
       });
-      expect(http.trySetDefaultProxy).toHaveBeenCalledWith(
+      expect(http.createOptionalBudget).toHaveBeenCalledWith(undefined, 12345);
+      expect(http.tryOptionalRequest).toHaveBeenCalledTimes(1);
+      expect(http.tryOptionalRequest).toHaveBeenCalledWith(
+        budget,
+        'post',
         CTX.providerUrl,
         CTX.providerApiKey,
-        INSTANCE,
+        `/proxy/set/${INSTANCE}`,
         expect.any(Object),
-        undefined,
-        12345,
       );
     });
 
@@ -580,6 +615,248 @@ describe('EvolutionAdapter', () => {
         undefined,
         undefined,
       );
+    });
+  });
+
+  describe('default proxy confirmation', () => {
+    const BUDGET = { deadlineAt: 1, callLimitMs: 1 };
+    const ACTIVE = {
+      enabled: true,
+      host: 'proxy.example.invalid',
+      port: '80',
+      protocol: 'http',
+      username: 'fixture-user',
+      password: 'fixture-secret',
+    };
+    const PUBLIC_ACTIVE = {
+      enabled: true,
+      host: 'proxy.example.invalid',
+      port: '80',
+      protocol: 'http',
+      username: 'fixture-user',
+    };
+    const DISABLED_ENVELOPE = {
+      proxy: {
+        instanceName: INSTANCE,
+        proxy: {
+          enabled: false,
+          host: '',
+          port: '',
+          protocol: '',
+          username: '',
+          password: '',
+        },
+      },
+    };
+
+    function apply(proxy: Record<string, unknown> = ACTIVE) {
+      return adapter.applyInstanceDefaults(
+        CTX,
+        INSTANCE,
+        { proxy: proxy as unknown as typeof ACTIVE },
+        { defaultProxyDeadlineAt: 12345 },
+      );
+    }
+
+    function reads() {
+      return http.tryOptionalRequest.mock.calls.filter(
+        (call) => call[1] === 'get',
+      ).length;
+    }
+
+    beforeEach(() => {
+      http.createOptionalBudget.mockReturnValue(BUDGET);
+      http.waitOptional.mockResolvedValue(true);
+    });
+
+    it('replaces an empty set envelope with the confirmed state, without password', async () => {
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: DISABLED_ENVELOPE })
+        .mockResolvedValueOnce({ data: ACTIVE });
+      const result = await apply();
+      expect(result).toEqual({
+        proxy: {
+          proxy: { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE },
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('password');
+      expect(http.tryOptionalRequest.mock.calls[0][5]).toMatchObject({
+        password: 'fixture-secret',
+      });
+      expect(reads()).toBe(1);
+    });
+
+    it.each([
+      [{ ...ACTIVE }, PUBLIC_ACTIVE],
+      [
+        { instanceName: INSTANCE, proxy: ACTIVE },
+        { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE },
+      ],
+      [null, { proxy: { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE } }],
+    ])(
+      'keeps the public path of the set envelope %p',
+      async (set, expected) => {
+        http.tryOptionalRequest
+          .mockResolvedValueOnce({ data: set })
+          .mockResolvedValueOnce({ data: { proxy: ACTIVE } });
+        await expect(apply()).resolves.toEqual({ proxy: expected });
+      },
+    );
+
+    it('removes password from wrapper levels too', async () => {
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({
+          data: {
+            password: 'wrapper-secret',
+            proxy: {
+              instanceName: INSTANCE,
+              password: 'middle-secret',
+              proxy: ACTIVE,
+            },
+          },
+        })
+        .mockResolvedValueOnce({ data: ACTIVE });
+      const result = await apply();
+      expect(JSON.stringify(result)).not.toMatch(/secret|password/);
+    });
+
+    it('normalizes a numeric port and a missing username', async () => {
+      const sent = { ...ACTIVE, username: undefined, password: undefined };
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: null })
+        .mockResolvedValueOnce({
+          data: { ...ACTIVE, port: 80, username: null, password: null },
+        });
+      await expect(apply(sent)).resolves.toEqual({
+        proxy: {
+          proxy: {
+            instanceName: INSTANCE,
+            proxy: { ...PUBLIC_ACTIVE, port: 80, username: null },
+          },
+        },
+      });
+    });
+
+    it('retries transient empty/404/divergent reads within three reads', async () => {
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: DISABLED_ENVELOPE })
+        .mockResolvedValueOnce({ data: null })
+        .mockResolvedValueOnce({ failure: 'upstream_http', status: 404 })
+        .mockResolvedValueOnce({ data: ACTIVE });
+      await expect(apply()).resolves.toEqual({
+        proxy: {
+          proxy: { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE },
+        },
+      });
+      expect(http.waitOptional.mock.calls).toEqual([
+        [BUDGET, 100],
+        [BUDGET, 250],
+      ]);
+      expect(reads()).toBe(3);
+      expect(
+        http.tryOptionalRequest.mock.calls.filter((call) => call[1] === 'post'),
+      ).toHaveLength(1);
+    });
+
+    it('never reports a divergent state as confirmed', async () => {
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: DISABLED_ENVELOPE })
+        .mockResolvedValue({ data: DISABLED_ENVELOPE });
+      const result = await apply();
+      expect(result).toEqual({
+        proxyFailure: 'confirmation_mismatch',
+        proxyDiagnostics: {
+          operation: 'find',
+          reads: 3,
+          durationMs: expect.any(Number) as unknown,
+        },
+      });
+      expect(result).not.toHaveProperty('proxy');
+    });
+
+    it.each([
+      [{ ...ACTIVE, host: 'other.invalid' }, 'confirmation_mismatch', 3],
+      [{ proxy: { instanceName: 'other', proxy: ACTIVE } }, 'invalid', 1],
+      [{ enabled: 'true', host: 'x' }, 'invalid', 1],
+      [{ enabled: true, proxy: ACTIVE }, 'invalid', 1],
+      ['unexpected', 'invalid', 1],
+    ])('omits proxy for read %p', async (read, reason, expectedReads) => {
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: ACTIVE })
+        .mockResolvedValue({ data: read });
+      const result = await apply();
+      expect(result).not.toHaveProperty('proxy');
+      expect(result.proxyFailure).toBe(
+        reason === 'invalid' ? 'confirmation_invalid' : reason,
+      );
+      expect(reads()).toBe(expectedReads);
+    });
+
+    it.each([401, 403, 500])(
+      'does not repeat a read rejected with HTTP %s',
+      async (status) => {
+        http.tryOptionalRequest
+          .mockResolvedValueOnce({ data: ACTIVE })
+          .mockResolvedValue({ failure: 'upstream_http', status });
+        const result = await apply();
+        expect(result).toMatchObject({
+          proxyFailure: 'upstream_http',
+          proxyDiagnostics: { operation: 'find', reads: 1 },
+        });
+        expect(result).not.toHaveProperty('proxy');
+        expect(http.waitOptional).not.toHaveBeenCalled();
+      },
+    );
+
+    it('stops when the shared budget no longer fits a read or a pause', async () => {
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: ACTIVE })
+        .mockResolvedValueOnce({ data: null });
+      http.waitOptional.mockResolvedValue(false);
+      await expect(apply()).resolves.toMatchObject({
+        proxyFailure: 'confirmation_unavailable',
+        proxyDiagnostics: { reads: 1 },
+      });
+      http.tryOptionalRequest.mockReset();
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: ACTIVE })
+        .mockResolvedValueOnce({ failure: 'budget_exhausted' });
+      await expect(apply()).resolves.toMatchObject({
+        proxyFailure: 'confirmation_unavailable',
+        proxyDiagnostics: { reads: 0 },
+      });
+    });
+
+    it('keeps an explicitly disabled default and confirms it as such', async () => {
+      const disabled = { ...ACTIVE, enabled: false };
+      http.tryOptionalRequest
+        .mockResolvedValueOnce({ data: DISABLED_ENVELOPE })
+        .mockResolvedValueOnce({ data: DISABLED_ENVELOPE.proxy.proxy });
+      await expect(apply(disabled)).resolves.toEqual({
+        proxy: {
+          proxy: {
+            instanceName: INSTANCE,
+            proxy: {
+              enabled: false,
+              host: '',
+              port: '',
+              protocol: '',
+              username: '',
+            },
+          },
+        },
+      });
+      expect(http.tryOptionalRequest.mock.calls[0][5]).toMatchObject({
+        enabled: false,
+      });
+    });
+
+    it('skips the proxy without a finite budget', async () => {
+      http.createOptionalBudget.mockReturnValue(undefined);
+      await expect(apply()).resolves.toEqual({
+        proxyFailure: 'budget_unavailable',
+      });
+      expect(http.tryOptionalRequest).not.toHaveBeenCalled();
     });
   });
 });

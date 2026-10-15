@@ -295,6 +295,7 @@ export class InstanceService {
                 providerId: provider.id,
                 instanceId: instance.id,
                 reason: applied.proxyFailure,
+                ...applied.proxyDiagnostics,
               }),
             );
           }

@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import { QrRequestContext } from '../../common/qr-request-context';
 import { AppConfig } from '../../config/config.schema';
-import { EvolutionHttpService } from './evolution.http';
+import { EvolutionHttpService, OptionalCallBudget } from './evolution.http';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -36,15 +36,38 @@ describe('Evolution HTTP — optional default proxy', () => {
     jest.useRealTimers();
   });
 
-  function call(execution?: QrRequestContext, deadlineAt?: number) {
-    return service.trySetDefaultProxy(
+  function budget(
+    execution?: QrRequestContext,
+    deadlineAt?: number,
+  ): OptionalCallBudget {
+    const created = service.createOptionalBudget(execution, deadlineAt);
+    if (!created) throw new Error('fixture budget unavailable');
+    return created;
+  }
+
+  function post(target: OptionalCallBudget) {
+    return service.tryOptionalRequest(
+      target,
+      'post',
       URL,
       'fixture-key',
-      'fixture',
+      '/proxy/set/fixture',
       { enabled: true },
-      execution,
-      deadlineAt,
     );
+  }
+
+  function find(target: OptionalCallBudget) {
+    return service.tryOptionalRequest(
+      target,
+      'get',
+      URL,
+      'fixture-key',
+      '/proxy/find/fixture',
+    );
+  }
+
+  function call(execution?: QrRequestContext, deadlineAt?: number) {
+    return post(budget(execution, deadlineAt));
   }
 
   function stall() {
@@ -60,9 +83,17 @@ describe('Evolution HTTP — optional default proxy', () => {
     );
   }
 
-  it.each([true, false])(
-    'cancels only the optional call after exactly 5 seconds (QR=%s)',
-    async (qr) => {
+  it('has no budget without a finite deadline', () => {
+    expect(service.createOptionalBudget()).toBeUndefined();
+    expect(service.createOptionalBudget(undefined, Infinity)).toBeUndefined();
+  });
+
+  it.each([
+    [true, 80000],
+    [false, 14000],
+  ])(
+    'uses the configured per-call limit instead of 5 seconds (QR=%s)',
+    async (qr, expected) => {
       const execution = qr ? new QrRequestContext(90000, 80000) : undefined;
       const remove = execution
         ? jest.spyOn(execution.signal, 'removeEventListener')
@@ -70,11 +101,13 @@ describe('Evolution HTTP — optional default proxy', () => {
       stall();
       const pending = call(execution, performance.now() + 15000);
       const signal = request.mock.calls[0][0].signal;
-      expect(request.mock.calls[0][0].timeout).toBe(5000);
-      await jest.advanceTimersByTimeAsync(4999);
+      expect(request.mock.calls[0][0].timeout).toBe(expected);
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(signal?.aborted).toBe(false);
+      await jest.advanceTimersByTimeAsync(expected - 5001);
       expect(signal?.aborted).toBe(false);
       await jest.advanceTimersByTimeAsync(1);
-      await expect(pending).resolves.toEqual({ proxyFailure: 'timeout' });
+      await expect(pending).resolves.toEqual({ failure: 'timeout' });
       expect(signal?.aborted).toBe(true);
       expect(execution?.signal.aborted ?? false).toBe(false);
       expect(execution?.reason).toBeUndefined();
@@ -85,23 +118,36 @@ describe('Evolution HTTP — optional default proxy', () => {
     },
   );
 
-  it('preserves the raw proxy response on success and removes its listener', async () => {
+  it('returns the raw response on success and removes its listener', async () => {
     const execution = new QrRequestContext(90000, 80000);
     const remove = jest.spyOn(execution.signal, 'removeEventListener');
     const raw = {
       proxy: { instanceName: 'fixture', proxy: { enabled: true } },
     };
     request.mockResolvedValue({ data: raw });
-    await expect(call(execution)).resolves.toEqual({ proxy: raw });
+    await expect(call(execution)).resolves.toEqual({ data: raw });
     expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
     expect(execution).toMatchObject({
       calls: 1,
       lastOperation: 'proxy',
-      callTimeoutMs: 5000,
+      callTimeoutMs: 80000,
     });
   });
 
-  it.each([400, 401, 408, 429, 500, 504])(
+  it('sends the body only on POST', async () => {
+    request.mockResolvedValue({ data: null });
+    const target = budget(undefined, performance.now() + 15000);
+    await post(target);
+    await find(target);
+    expect(request.mock.calls.map(([config]) => config.method)).toEqual([
+      'post',
+      'get',
+    ]);
+    expect(request.mock.calls[0][0].data).toEqual({ enabled: true });
+    expect(request.mock.calls[1][0].data).toBeUndefined();
+  });
+
+  it.each([400, 401, 404, 408, 429, 500, 504])(
     'tolerates upstream HTTP %s without retry or poisoning the QR context',
     async (status) => {
       const execution = new QrRequestContext(90000, 80000);
@@ -110,7 +156,8 @@ describe('Evolution HTTP — optional default proxy', () => {
         response: { status, data: { secret: 'fixture' } },
       });
       await expect(call(execution)).resolves.toEqual({
-        proxyFailure: 'upstream_http',
+        failure: 'upstream_http',
+        status,
       });
       expect(execution.failureSource).toBeUndefined();
       expect(execution.signal.aborted).toBe(false);
@@ -119,9 +166,12 @@ describe('Evolution HTTP — optional default proxy', () => {
     },
   );
 
-  it.each([true, false])(
-    'accepts a successful proxy response just before the deadline (QR=%s)',
-    async (qr) => {
+  it.each([
+    [true, 80000],
+    [false, 14000],
+  ])(
+    'accepts a successful response just before the call limit (QR=%s)',
+    async (qr, limit) => {
       const execution = qr ? new QrRequestContext(90000, 80000) : undefined;
       const raw = { enabled: true, host: 'fixture.invalid', port: '8080' };
       let complete!: (value: { data: unknown }) => void;
@@ -133,9 +183,9 @@ describe('Evolution HTTP — optional default proxy', () => {
       );
       const pending = call(execution, performance.now() + 15000);
       const signal = request.mock.calls[0][0].signal;
-      await jest.advanceTimersByTimeAsync(4999);
+      await jest.advanceTimersByTimeAsync(limit - 1);
       complete({ data: raw });
-      await expect(pending).resolves.toEqual({ proxy: raw });
+      await expect(pending).resolves.toEqual({ data: raw });
       await jest.advanceTimersByTimeAsync(10000);
       expect(signal?.aborted).toBe(false);
       expect(execution?.signal.aborted ?? false).toBe(false);
@@ -148,8 +198,9 @@ describe('Evolution HTTP — optional default proxy', () => {
     'tolerates transport failure %s',
     async (code) => {
       request.mockRejectedValue({ isAxiosError: true, code });
-      await expect(call()).resolves.toEqual({
-        proxyFailure: code === 'ECONNRESET' ? 'transport_error' : 'timeout',
+      const pending = call(undefined, performance.now() + 15000);
+      await expect(pending).resolves.toEqual({
+        failure: code === 'ECONNRESET' ? 'transport_error' : 'timeout',
       });
       expect(request).toHaveBeenCalledTimes(1);
       expect(service.getCircuitState(URL)).toBe('CLOSED');
@@ -157,7 +208,7 @@ describe('Evolution HTTP — optional default proxy', () => {
   );
 
   it.each([true, false])(
-    'uses the remaining budget with a margin (QR=%s)',
+    'uses the remaining budget with a single margin (QR=%s)',
     async (qr) => {
       const execution = qr ? new QrRequestContext(90000, 80000) : undefined;
       const deadlineAt = performance.now() + (qr ? 90000 : 15000);
@@ -166,10 +217,34 @@ describe('Evolution HTTP — optional default proxy', () => {
       const pending = call(execution, deadlineAt);
       expect(request.mock.calls[0][0].timeout).toBe(1500);
       await jest.advanceTimersByTimeAsync(1500);
-      await expect(pending).resolves.toEqual({ proxyFailure: 'timeout' });
+      await expect(pending).resolves.toEqual({ failure: 'timeout' });
       expect(execution?.signal.aborted ?? false).toBe(false);
     },
   );
+
+  it('shares one budget across sequential calls without restarting it', async () => {
+    const target = budget(undefined, performance.now() + 15000);
+    let complete!: (value: { data: unknown }) => void;
+    request.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const first = post(target);
+    await jest.advanceTimersByTimeAsync(10000);
+    complete({ data: null });
+    await first;
+    stall();
+    const second = find(target);
+    expect(request.mock.calls[1][0].timeout).toBe(4000);
+    await jest.advanceTimersByTimeAsync(4000);
+    await expect(second).resolves.toEqual({ failure: 'timeout' });
+    await expect(find(target)).resolves.toEqual({
+      failure: 'budget_exhausted',
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
 
   it.each([true, false])(
     'skips the optional call when only the finish margin remains (QR=%s)',
@@ -178,7 +253,7 @@ describe('Evolution HTTP — optional default proxy', () => {
       const deadlineAt = performance.now() + (qr ? 90000 : 15000);
       jest.advanceTimersByTime(qr ? 89000 : 14000);
       await expect(call(execution, deadlineAt)).resolves.toEqual({
-        proxyFailure: 'budget_exhausted',
+        failure: 'budget_exhausted',
       });
       expect(request).not.toHaveBeenCalled();
       expect(execution?.signal.aborted ?? false).toBe(false);
@@ -200,14 +275,22 @@ describe('Evolution HTTP — optional default proxy', () => {
 
   it('never sends after a parent cancellation or total expiration', async () => {
     const execution = new QrRequestContext(90000, 80000);
+    const target = budget(execution);
     jest.advanceTimersByTime(90000);
-    await expect(call(execution)).rejects.toMatchObject({
+    await expect(post(target)).rejects.toMatchObject({
       reason: 'request_timeout',
     });
+    let error: unknown;
+    try {
+      service.createOptionalBudget(execution);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ reason: 'request_timeout' });
     expect(request).not.toHaveBeenCalled();
   });
 
-  it('does not report a late proxy success after the optional timeout', async () => {
+  it('does not report a late success after the optional timeout', async () => {
     let complete!: (value: { data: unknown }) => void;
     request.mockImplementation(
       () =>
@@ -217,9 +300,9 @@ describe('Evolution HTTP — optional default proxy', () => {
     );
     const execution = new QrRequestContext(90000, 80000);
     const pending = call(execution);
-    await jest.advanceTimersByTimeAsync(5000);
+    await jest.advanceTimersByTimeAsync(80000);
     complete({ data: { enabled: true } });
-    await expect(pending).resolves.toEqual({ proxyFailure: 'timeout' });
+    await expect(pending).resolves.toEqual({ failure: 'timeout' });
     expect(execution.signal.aborted).toBe(false);
   });
 
@@ -229,11 +312,35 @@ describe('Evolution HTTP — optional default proxy', () => {
       service.request('get', URL, 'fixture-key', '/mandatory'),
     ).rejects.toThrow();
     request.mockClear();
-    await expect(call()).resolves.toEqual({ proxyFailure: 'circuit_open' });
+    const deadlineAt = () => performance.now() + 15000;
+    await expect(call(undefined, deadlineAt())).resolves.toEqual({
+      failure: 'circuit_open',
+    });
     expect(request).not.toHaveBeenCalled();
     jest.advanceTimersByTime(30000);
     request.mockResolvedValue({ data: { enabled: true } });
-    await expect(call()).resolves.toEqual({ proxy: { enabled: true } });
+    await expect(call(undefined, deadlineAt())).resolves.toEqual({
+      data: { enabled: true },
+    });
     expect(service.getCircuitState(URL)).toBe('OPEN');
+  });
+
+  describe('waitOptional', () => {
+    it('waits inside the budget and refuses a pause that does not fit', async () => {
+      const target = budget(undefined, performance.now() + 1350);
+      const first = service.waitOptional(target, 100);
+      await jest.advanceTimersByTimeAsync(100);
+      await expect(first).resolves.toBe(true);
+      await expect(service.waitOptional(target, 250)).resolves.toBe(false);
+    });
+
+    it('stops a pause on parent cancellation', async () => {
+      const execution = new QrRequestContext(90000, 80000);
+      const pending = service
+        .waitOptional(budget(execution), 250)
+        .catch((error: unknown) => error);
+      execution.abort('client_disconnected');
+      expect(await pending).toMatchObject({ reason: 'client_disconnected' });
+    });
   });
 });

@@ -235,15 +235,28 @@ export interface InstanceDefaultProxyConfig {
   password?: string;
 }
 
+export type OptionalCallFailure =
+  | 'timeout'
+  | 'upstream_http'
+  | 'transport_error'
+  | 'circuit_open'
+  | 'budget_exhausted';
+
 export interface ApplyInstanceDefaultsResult {
   webhook?: unknown;
+  /** Confirmed default proxy, without `password`. Omitted when unconfirmed. */
   proxy?: unknown;
   proxyFailure?:
-    | 'timeout'
-    | 'upstream_http'
-    | 'transport_error'
-    | 'circuit_open'
-    | 'budget_exhausted';
+    | OptionalCallFailure
+    | 'budget_unavailable'
+    | 'confirmation_invalid'
+    | 'confirmation_mismatch'
+    | 'confirmation_unavailable';
+  proxyDiagnostics?: {
+    operation: 'set' | 'find';
+    reads: number;
+    durationMs: number;
+  };
 }
 
 // --- Proxy DTOs ---
