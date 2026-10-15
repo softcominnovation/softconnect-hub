@@ -16,14 +16,24 @@ import {
   QrTimeoutException,
   QrOperation,
 } from '../../common/qr-request-context';
-import type { ApplyInstanceDefaultsResult } from '../../providers/whatsapp-provider.interface';
-
-export const INSTANCE_DEFAULT_PROXY_TIMEOUT_MS = 5000;
+import type { OptionalCallFailure } from '../../providers/whatsapp-provider.interface';
 
 export interface QrHttpOptions {
   execution: QrRequestContext;
   operation: QrOperation;
 }
+
+/** Single finite deadline shared by every call/interval of an optional step. */
+export interface OptionalCallBudget {
+  readonly execution?: QrRequestContext;
+  /** `performance.now()` instant, with the finish margin already deducted. */
+  readonly deadlineAt: number;
+  readonly callLimitMs: number;
+}
+
+export type OptionalCallResult<T> =
+  | { data: T }
+  | { failure: OptionalCallFailure; status?: number };
 
 type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
@@ -39,10 +49,12 @@ export class EvolutionHttpService {
   private readonly client: AxiosInstance;
   private readonly threshold: number;
   private readonly resetMs: number;
+  private readonly legacyTimeoutMs: number;
   private readonly breakers = new Map<string, CircuitBreaker>();
 
   constructor(private readonly config: ConfigService<AppConfig, true>) {
     const timeoutMs = this.config.get('PROXY_TIMEOUT_MS', { infer: true });
+    this.legacyTimeoutMs = timeoutMs;
     this.threshold = this.config.get('CIRCUIT_BREAKER_THRESHOLD', {
       infer: true,
     });
@@ -107,33 +119,65 @@ export class EvolutionHttpService {
     return this.getBreaker(vpsUrl).state;
   }
 
-  async trySetDefaultProxy(
-    vpsUrl: string,
-    apiKey: string,
-    instanceName: string,
-    data: unknown,
+  /**
+   * QR: remaining request budget and `QR_PROVIDER_TIMEOUT_MS` per call.
+   * Legacy: the request deadline and `PROXY_TIMEOUT_MS` per call.
+   * Returns undefined when no finite deadline is known.
+   */
+  createOptionalBudget(
     execution?: QrRequestContext,
     deadlineAt?: number,
-  ): Promise<ApplyInstanceDefaultsResult> {
+  ): OptionalCallBudget | undefined {
     execution?.assertActive();
-    const remainingMs = execution
-      ? execution.remainingMs
-      : deadlineAt === undefined
-        ? Infinity
-        : deadlineAt - performance.now();
-    const timeoutMs = Math.min(
-      INSTANCE_DEFAULT_PROXY_TIMEOUT_MS,
-      Math.floor(remainingMs - QR_FINISH_MARGIN_MS),
-    );
-    if (timeoutMs <= 0) return { proxyFailure: 'budget_exhausted' };
+    if (execution) {
+      return {
+        execution,
+        deadlineAt:
+          performance.now() + execution.remainingMs - QR_FINISH_MARGIN_MS,
+        callLimitMs: execution.providerTimeoutMs,
+      };
+    }
+    if (deadlineAt === undefined || !Number.isFinite(deadlineAt)) {
+      return undefined;
+    }
+    return {
+      deadlineAt: deadlineAt - QR_FINISH_MARGIN_MS,
+      callLimitMs: this.legacyTimeoutMs,
+    };
+  }
 
-    // An optional dependency must not open or reset the provider-wide circuit.
+  private optionalRemainingMs(budget: OptionalCallBudget): number {
+    return Math.max(0, Math.floor(budget.deadlineAt - performance.now()));
+  }
+
+  /**
+   * Optional call: no retry, child timeout that never aborts the parent
+   * context, and no effect on the provider-wide circuit breaker.
+   */
+  async tryOptionalRequest<T>(
+    budget: OptionalCallBudget,
+    method: 'get' | 'post',
+    vpsUrl: string,
+    apiKey: string,
+    path: string,
+    data?: unknown,
+  ): Promise<OptionalCallResult<T>> {
+    const { execution } = budget;
+    execution?.assertActive();
+    const startedAt = performance.now();
+    const callDeadlineAt = Math.min(
+      budget.deadlineAt,
+      startedAt + budget.callLimitMs,
+    );
+    const timeoutMs = Math.floor(callDeadlineAt - startedAt);
+    if (timeoutMs <= 0) return { failure: 'budget_exhausted' };
+
     const breaker = this.getBreaker(vpsUrl);
     if (
       breaker.state === 'OPEN' &&
       Date.now() - (breaker.openedAt ?? 0) < this.resetMs
     ) {
-      return { proxyFailure: 'circuit_open' };
+      return { failure: 'circuit_open' };
     }
 
     const controller = new AbortController();
@@ -146,37 +190,59 @@ export class EvolutionHttpService {
       execution.callTimeoutMs = timeoutMs;
     }
     try {
-      const response = await this.client.request<unknown>({
-        method: 'post',
-        url: `${vpsUrl}/proxy/set/${instanceName}`,
+      const response = await this.client.request<T>({
+        method,
+        url: `${vpsUrl}${path}`,
         headers: { apikey: apiKey },
-        data,
+        data: method === 'post' ? data : undefined,
         timeout: timeoutMs,
         signal: controller.signal,
       });
       execution?.assertActive();
-      if (controller.signal.aborted) return { proxyFailure: 'timeout' };
-      return { proxy: response.data };
+      // A busy event loop may settle the response before dispatching the timer.
+      if (controller.signal.aborted || performance.now() >= callDeadlineAt)
+        return { failure: 'timeout' };
+      return { data: response.data };
     } catch (error) {
       execution?.assertActive();
       if (
         controller.signal.aborted ||
+        performance.now() >= callDeadlineAt ||
         (axios.isAxiosError(error) &&
           !error.response &&
           (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'))
       ) {
-        return { proxyFailure: 'timeout' };
+        return { failure: 'timeout' };
       }
-      return {
-        proxyFailure:
-          axios.isAxiosError(error) && error.response
-            ? 'upstream_http'
-            : 'transport_error',
-      };
+      if (axios.isAxiosError(error) && error.response) {
+        return { failure: 'upstream_http', status: error.response.status };
+      }
+      return { failure: 'transport_error' };
     } finally {
       clearTimeout(timer);
       execution?.signal.removeEventListener('abort', onAbort);
     }
+  }
+
+  /** Cancellable pause inside the budget; false when it does not fit. */
+  async waitOptional(
+    budget: OptionalCallBudget,
+    delayMs: number,
+  ): Promise<boolean> {
+    const { execution } = budget;
+    execution?.assertActive();
+    if (this.optionalRemainingMs(budget) <= delayMs) return false;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        execution?.signal.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, delayMs);
+      execution?.signal.addEventListener('abort', done, { once: true });
+    });
+    execution?.assertActive();
+    return this.optionalRemainingMs(budget) > 0;
   }
 
   async request<T>(

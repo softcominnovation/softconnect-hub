@@ -40,6 +40,12 @@ import {
   WhatsAppProvider,
 } from '../../providers/whatsapp-provider.interface';
 import { EvolutionHttpService } from './evolution.http';
+import {
+  buildPublicProxy,
+  canConfirmProxySet,
+  classifyProxyRead,
+  DEFAULT_PROXY_CONFIRM_DELAYS_MS,
+} from './evolution.proxy-confirmation';
 
 @Injectable()
 export class EvolutionAdapter implements WhatsAppProvider {
@@ -569,28 +575,120 @@ export class EvolutionAdapter implements WhatsAppProvider {
     }
 
     if (defaults.proxy) {
-      const { enabled, host, port, protocol, username, password } =
-        defaults.proxy;
       Object.assign(
         result,
-        await this.http.trySetDefaultProxy(
-          ctx.providerUrl,
-          ctx.providerApiKey,
+        await this.applyDefaultProxy(
+          ctx,
           instanceName,
-          {
-            enabled: enabled ?? true,
-            host,
-            port,
-            protocol: protocol as 'http' | 'https' | 'socks5',
-            username,
-            password,
-          },
-          ctx.execution,
+          defaults.proxy,
           options?.defaultProxyDeadlineAt,
         ),
       );
     }
 
     return result;
+  }
+
+  /**
+   * One POST, then up to three reads sharing the same budget. Only a read
+   * that matches what was sent is returned; otherwise `proxy` is omitted.
+   */
+  private async applyDefaultProxy(
+    ctx: ProviderContext,
+    instanceName: string,
+    defaults: InstanceDefaultProxyConfig,
+    deadlineAt: number | undefined,
+  ): Promise<ApplyInstanceDefaultsResult> {
+    const startedAt = performance.now();
+    const diagnostics = (operation: 'set' | 'find', reads: number) => ({
+      operation,
+      reads,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    const budget = this.http.createOptionalBudget(ctx.execution, deadlineAt);
+    if (!budget) return { proxyFailure: 'budget_unavailable' };
+
+    const { enabled, host, port, protocol, username, password } = defaults;
+    const payload: SetProxyDto = {
+      enabled: enabled ?? true,
+      host,
+      port,
+      protocol: protocol as SetProxyDto['protocol'],
+      username,
+      password,
+    };
+    const set = await this.http.tryOptionalRequest<unknown>(
+      budget,
+      'post',
+      ctx.providerUrl,
+      ctx.providerApiKey,
+      `/proxy/set/${instanceName}`,
+      payload,
+    );
+    if ('failure' in set) {
+      return {
+        proxyFailure: set.failure,
+        proxyDiagnostics: diagnostics('set', 0),
+      };
+    }
+    if (!canConfirmProxySet(set.data, instanceName)) {
+      return {
+        proxyFailure: 'confirmation_invalid',
+        proxyDiagnostics: diagnostics('set', 0),
+      };
+    }
+
+    let reads = 0;
+    let pending: 'confirmation_unavailable' | 'confirmation_mismatch' =
+      'confirmation_unavailable';
+    const delays = [0, ...DEFAULT_PROXY_CONFIRM_DELAYS_MS];
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      if (
+        attempt > 0 &&
+        !(await this.http.waitOptional(budget, delays[attempt]))
+      ) {
+        break;
+      }
+      const read = await this.http.tryOptionalRequest<unknown>(
+        budget,
+        'get',
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        `/proxy/find/${instanceName}`,
+      );
+      if ('failure' in read && read.failure === 'budget_exhausted') break;
+      reads += 1;
+      if ('failure' in read) {
+        if (read.status === 404) {
+          pending = 'confirmation_unavailable';
+          continue;
+        }
+        return {
+          proxyFailure: read.failure,
+          proxyDiagnostics: diagnostics('find', reads),
+        };
+      }
+      const outcome = classifyProxyRead(read.data, instanceName, payload);
+      if (outcome.kind === 'confirmed') {
+        return {
+          proxy: buildPublicProxy(set.data, outcome.leaf, instanceName),
+        };
+      }
+      if (outcome.kind === 'invalid') {
+        return {
+          proxyFailure: 'confirmation_invalid',
+          proxyDiagnostics: diagnostics('find', reads),
+        };
+      }
+      pending =
+        outcome.kind === 'divergent'
+          ? 'confirmation_mismatch'
+          : 'confirmation_unavailable';
+    }
+
+    return {
+      proxyFailure: pending,
+      proxyDiagnostics: diagnostics('find', reads),
+    };
   }
 }
