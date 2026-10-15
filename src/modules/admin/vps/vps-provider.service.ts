@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -13,12 +14,31 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { canonicalEvolutionEndpoint } from '../../../prisma/evolution-identity';
 import { LegacyProvider, legacyProvider } from '../../../prisma/legacy-selects';
 import { CacheService } from '../../../cache/cache.service';
+import { invalidateInstanceCache } from '../../../cache/instance-cache';
 import { CreateVpsProviderDto } from './dto/create-vps-provider.dto';
 import { UpdateVpsProviderDto } from './dto/update-vps-provider.dto';
 import {
   lockProvider,
   OPEN_PROVISIONING_STATES,
 } from '../../provisioning/evolution-locks';
+import {
+  assertEndpointAvailable,
+  assertEvolutionUnused,
+  assertRevision,
+  assertWritersCompatible,
+  evolutionReadiness,
+  isControlledEvolution,
+  lockEvolutionCatalog,
+} from '../../provisioning/evolution-controls';
+
+export interface EvolutionProviderUpdate extends UpdateVpsProviderDto {
+  expectedRevision: number;
+  vpsId?: string;
+  maxInstances?: number | null;
+  acceptingNewInstances?: boolean;
+  confirmIdentity?: boolean;
+  writersCompatible?: boolean;
+}
 
 type DecryptedProvider = LegacyProvider;
 
@@ -34,21 +54,33 @@ export class VpsProviderService {
     vpsId: string,
     dto: CreateVpsProviderDto,
   ): Promise<DecryptedProvider> {
-    await this.assertVpsExists(vpsId);
+    return this.decrypt(await this.createRecord(vpsId, dto));
+  }
 
-    const key = this.encryptionKey;
-    const provider = await this.prisma.vpsProvider.create({
-      data: {
-        vpsId,
-        label: dto.label,
-        providerUrl: dto.providerUrl,
-        canonicalEndpoint: canonicalEvolutionEndpoint(dto.providerUrl),
-        providerApiKey: encryptAES256GCM(dto.providerApiKey, key),
-        adapterType: dto.adapterType ?? 'evolution',
-      },
+  async createRecord(
+    vpsId: string,
+    dto: CreateVpsProviderDto,
+    strict = false,
+  ): Promise<VpsProvider> {
+    return this.prisma.$transaction(async (tx) => {
+      await lockEvolutionCatalog(tx);
+      if (!(await tx.vpsServer.findUnique({ where: { id: vpsId } })))
+        throw new NotFoundException('VPS não encontrada');
+      await assertEndpointAvailable(tx, dto.providerUrl, undefined, strict);
+      return tx.vpsProvider.create({
+        data: {
+          vpsId,
+          label: dto.label,
+          providerUrl: dto.providerUrl,
+          canonicalEndpoint: canonicalEvolutionEndpoint(dto.providerUrl),
+          providerApiKey: encryptAES256GCM(
+            dto.providerApiKey,
+            this.encryptionKey,
+          ),
+          adapterType: dto.adapterType ?? 'evolution',
+        },
+      });
     });
-
-    return this.decrypt(provider);
   }
 
   async findAll(vpsId: string): Promise<DecryptedProvider[]> {
@@ -66,30 +98,49 @@ export class VpsProviderService {
     id: string,
     dto: UpdateVpsProviderDto,
   ): Promise<DecryptedProvider> {
-    await this.assertProviderExists(vpsId, id);
+    return this.decrypt(await this.updateRecord(vpsId, id, dto));
+  }
 
-    const key = this.encryptionKey;
+  async updateRecord(
+    vpsId: string,
+    id: string,
+    dto: UpdateVpsProviderDto,
+    policy?: EvolutionProviderUpdate,
+  ): Promise<VpsProvider> {
     const data: Prisma.VpsProviderUpdateInput = {};
 
     if (dto.label !== undefined) data.label = dto.label;
     if (dto.providerUrl !== undefined) {
       data.providerUrl = dto.providerUrl;
       data.canonicalEndpoint = canonicalEvolutionEndpoint(dto.providerUrl);
-      data.identityStatus = 'pending';
     }
     if (dto.adapterType !== undefined) data.adapterType = dto.adapterType;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.providerApiKey) {
-      data.providerApiKey = encryptAES256GCM(dto.providerApiKey, key);
+      data.providerApiKey = encryptAES256GCM(
+        dto.providerApiKey,
+        this.encryptionKey,
+      );
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await lockEvolutionCatalog(tx);
       const current = await lockProvider(tx, id);
+      if (current.vpsId !== vpsId)
+        throw new NotFoundException('Provider não encontrado na VPS');
+      if (policy)
+        assertRevision(current.configurationRevision, policy.expectedRevision);
       const changesDestination =
         (dto.providerUrl !== undefined &&
           dto.providerUrl !== current.providerUrl) ||
         (dto.adapterType !== undefined &&
-          dto.adapterType !== current.adapterType);
+          dto.adapterType !== current.adapterType) ||
+        (policy?.vpsId !== undefined && policy.vpsId !== current.vpsId);
+      const controlled = await isControlledEvolution(tx, current);
+      if (changesDestination && (policy || controlled))
+        await assertEvolutionUnused(tx, id, true);
+      if (dto.isActive === false && (policy || controlled))
+        await assertEvolutionUnused(tx, id);
       if (
         changesDestination &&
         (await tx.instanceProvisioning.findFirst({
@@ -102,12 +153,73 @@ export class VpsProviderService {
         throw new ConflictException(
           'Provider possui provisionamentos pendentes; destino preservado',
         );
+      if (changesDestination) {
+        data.identityStatus = 'pending';
+        data.callbackReadiness = 'pending';
+      }
+      if (dto.providerUrl !== undefined)
+        await assertEndpointAvailable(
+          tx,
+          dto.providerUrl,
+          id,
+          !!policy || controlled,
+        );
+      if (policy?.vpsId !== undefined) {
+        if (!(await tx.vpsServer.findUnique({ where: { id: policy.vpsId } })))
+          throw new NotFoundException('VPS não encontrada');
+        data.vps = { connect: { id: policy.vpsId } };
+      }
+      if (policy?.confirmIdentity) {
+        const url = dto.providerUrl ?? current.providerUrl;
+        const endpoint = canonicalEvolutionEndpoint(url);
+        if (!endpoint)
+          throw new BadRequestException('URL de Evolution inválida');
+        await assertEndpointAvailable(tx, url, id, true);
+        data.canonicalEndpoint = endpoint;
+        data.identityStatus = 'verified';
+      }
+      if (policy?.maxInstances !== undefined)
+        data.maxInstances = policy.maxInstances;
+      if (policy?.acceptingNewInstances !== undefined)
+        data.acceptingNewInstances = policy.acceptingNewInstances;
+      if (policy?.acceptingNewInstances === false)
+        await assertEndpointAvailable(
+          tx,
+          dto.providerUrl ?? current.providerUrl,
+          id,
+          true,
+        );
+      if (policy?.maxInstances !== undefined && policy.maxInstances !== null) {
+        await assertWritersCompatible(tx, policy.writersCompatible);
+        const prospective = {
+          ...current,
+          identityStatus: policy.confirmIdentity
+            ? 'verified'
+            : current.identityStatus,
+          canonicalEndpoint: policy.confirmIdentity
+            ? canonicalEvolutionEndpoint(dto.providerUrl ?? current.providerUrl)
+            : current.canonicalEndpoint,
+        };
+        const { blockers } = await evolutionReadiness(
+          tx,
+          prospective,
+          this.config,
+        );
+        if (changesDestination || dto.providerApiKey)
+          blockers.push('configuration_changed');
+        if (blockers.length)
+          throw new ConflictException({
+            statusCode: 409,
+            message: 'Evolution ainda não preparada para limite',
+            blockers,
+          });
+      }
       return tx.vpsProvider.update({
         where: { id },
         data: {
           ...data,
           configurationRevision: { increment: 1 },
-          ...(dto.providerUrl !== undefined || dto.providerApiKey
+          ...(changesDestination || dto.providerApiKey
             ? {
                 inventoryStatus: 'unknown',
                 inventoryObservedAt: null,
@@ -117,24 +229,23 @@ export class VpsProviderService {
       });
     });
 
-    if (dto.providerApiKey || dto.providerUrl) {
+    if (
+      dto.providerApiKey ||
+      dto.providerUrl ||
+      dto.adapterType ||
+      dto.isActive !== undefined ||
+      policy?.vpsId
+    ) {
       await this.invalidateInstanceCachesForProvider(id);
     }
 
-    return this.decrypt(updated);
+    return updated;
   }
 
   async deactivate(vpsId: string, id: string): Promise<DecryptedProvider> {
-    await this.assertProviderExists(vpsId, id);
-
-    const updated = await this.prisma.vpsProvider.update({
-      where: { id },
-      data: { isActive: false },
-    });
-
-    await this.invalidateInstanceCachesForProvider(id);
-
-    return this.decrypt(updated);
+    return this.decrypt(
+      await this.updateRecord(vpsId, id, { isActive: false }),
+    );
   }
 
   private decrypt(provider: VpsProvider): DecryptedProvider {
@@ -157,24 +268,20 @@ export class VpsProviderService {
     if (!exists) throw new NotFoundException(`VPS ${vpsId} não encontrada`);
   }
 
-  private async assertProviderExists(vpsId: string, id: string): Promise<void> {
-    const exists = await this.prisma.vpsProvider.findFirst({
-      where: { id, vpsId },
-      select: { id: true },
-    });
-    if (!exists)
-      throw new NotFoundException(
-        `Provider ${id} não encontrado na VPS ${vpsId}`,
-      );
-  }
-
   private async invalidateInstanceCachesForProvider(
     providerId: string,
   ): Promise<void> {
     const instances = await this.prisma.instance.findMany({
-      where: { vpsProviderId: providerId, isActive: true },
-      select: { id: true },
+      where: { vpsProviderId: providerId },
+      select: {
+        id: true,
+        productId: true,
+        instanceName: true,
+        providerInstanceId: true,
+      },
     });
-    await Promise.all(instances.map((i) => this.cache.del(`instance:${i.id}`)));
+    await Promise.all(
+      instances.map((i) => invalidateInstanceCache(this.cache, i)),
+    );
   }
 }

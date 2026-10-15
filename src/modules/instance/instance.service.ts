@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   HttpException,
   Injectable,
   Logger,
@@ -67,6 +68,7 @@ import type { ProductDefaultProxy } from '@prisma/client';
 import { AuthCachePayload } from '../../auth/apikey.guard';
 import { decryptAES256GCM } from '../../common/crypto.util';
 import { CacheService } from '../../cache/cache.service';
+import { invalidateInstanceCache } from '../../cache/instance-cache';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EvolutionProvisioningService } from '../provisioning/evolution-provisioning.service';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
@@ -80,6 +82,7 @@ import {
 } from '../../providers/whatsapp-provider.interface';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
 import { withInstanceNumber } from './instance-number';
+import { withoutRelayToken } from '../webhook/relay-configuration';
 import {
   QrRequestContext,
   QrTimeoutException,
@@ -163,7 +166,8 @@ export class InstanceService {
           );
           if (payload.webhook)
             await this.provisioning.markWebhookApplied(ticket);
-          if (applied.webhook !== undefined) response.webhook = applied.webhook;
+          if (applied.webhook !== undefined)
+            response.webhook = withoutRelayToken(applied.webhook);
           if (applied.proxy !== undefined) response.proxy = applied.proxy;
           if (applied.proxyFailure)
             this.logger.warn(
@@ -276,78 +280,123 @@ export class InstanceService {
     product: AuthCachePayload,
     instanceNameFilter?: string,
   ): Promise<InstanceDto[]> {
-    if (!product.vpsProviderId) {
-      throw new BadRequestException('Produto sem VpsProvider associado');
-    }
-
-    const provider = await this.prisma.vpsProvider.findUnique({
-      where: { id: product.vpsProviderId, isActive: true },
+    const current = await this.prisma.product.findUnique({
+      where: { id: product.productId },
     });
-
-    if (!provider)
-      throw new NotFoundException('VpsProvider nao encontrado ou inativo');
-
-    const ctx: ProviderContext = {
-      providerUrl: provider.providerUrl,
-      providerApiKey: decryptAES256GCM(
-        provider.providerApiKey,
-        this.encryptionKeyHex,
-      ),
-    };
-
-    const adapter = this.adapterResolver.resolve(product.adapterType);
+    if (!current) throw new NotFoundException('Produto não encontrado');
     const nameFilter = instanceNameFilter?.trim() || undefined;
-
-    const [hubInstances, providerInstances] = await Promise.all([
-      this.prisma.instance.findMany({
-        where: {
-          productId: product.productId,
-          isActive: true,
-          ...(nameFilter
-            ? {
-                instanceName: {
-                  contains: nameFilter,
-                  mode: 'insensitive' as const,
-                },
-              }
-            : {}),
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      adapter.fetchInstances(ctx),
-    ]);
-
-    const byProviderId = new Map<string, InstanceDto>();
-    const byName = new Map<string, InstanceDto>();
-    for (const pi of providerInstances) {
-      const providerId = pi.id ?? pi.instanceId;
-      if (providerId) byProviderId.set(providerId, pi);
-      if (pi.instanceName) byName.set(pi.instanceName, pi);
+    const hubInstances = await this.prisma.instance.findMany({
+      where: {
+        productId: product.productId,
+        isActive: true,
+        ...(nameFilter
+          ? {
+              instanceName: {
+                contains: nameFilter,
+                mode: 'insensitive' as const,
+              },
+            }
+          : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const ids = new Set(hubInstances.map((item) => item.vpsProviderId));
+    if (!nameFilter && current.vpsProviderId) ids.add(current.vpsProviderId);
+    if (!ids.size) {
+      if (!current.vpsProviderId)
+        throw new BadRequestException('Produto sem VpsProvider associado');
+      if (nameFilter) return [];
+      ids.add(current.vpsProviderId);
     }
-
-    const list: InstanceDto[] = [];
-
-    for (const hub of hubInstances) {
-      const providerMatch =
-        (hub.providerInstanceId
-          ? byProviderId.get(hub.providerInstanceId)
-          : undefined) ?? byName.get(hub.instanceName);
-
-      // Só retorna o que existe no provider — evita stubs { hubId, instanceName, status }
-      if (!providerMatch) {
-        this.logger.warn(
-          `[listInstances] órfão no Hub sem match no provider — omitindo. hubId=${hub.id} instanceName=${hub.instanceName} providerInstanceId=${hub.providerInstanceId}`,
+    const providerIds = [...ids];
+    const results = new Map<
+      string,
+      { rows: InstanceDto[]; adapterType: string }
+    >();
+    const timeout = this.config.get<number>('PROXY_TIMEOUT_MS', 15000);
+    const execution = new QrRequestContext(timeout, timeout, 0);
+    const timer = setTimeout(() => execution.abort('request_timeout'), timeout);
+    let cursor = 0;
+    let failure: unknown;
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(3, providerIds.length) }, async () => {
+          while (!failure && cursor < providerIds.length) {
+            const id = providerIds[cursor++];
+            try {
+              execution.assertActive();
+              const provider = await this.prisma.vpsProvider.findUnique({
+                where: { id },
+              });
+              if (!provider)
+                throw new NotFoundException(
+                  'VpsProvider nao encontrado ou inativo',
+                );
+              const rows = await this.adapterResolver
+                .resolve(provider.adapterType)
+                .fetchInstances({
+                  providerUrl: provider.providerUrl,
+                  providerApiKey: decryptAES256GCM(
+                    provider.providerApiKey,
+                    this.encryptionKeyHex,
+                  ),
+                  execution,
+                  strictInventory: true,
+                });
+              execution.assertActive();
+              results.set(id, { rows, adapterType: provider.adapterType });
+            } catch (error) {
+              if (!failure) failure = error;
+              execution.abort('request_timeout');
+            }
+          }
+        }),
+      );
+      if (failure) {
+        if (
+          failure instanceof HttpException &&
+          (providerIds.length === 1 || [408, 504].includes(failure.getStatus()))
+        )
+          throw failure;
+        throw new BadGatewayException(
+          'Falha ao consultar instâncias nos providers',
         );
-        continue;
       }
-
-      list.push({
-        ...withInstanceNumber(providerMatch, product.adapterType),
-        hubId: hub.id,
-      } as InstanceDto);
+      const list: InstanceDto[] = [];
+      for (const hub of hubInstances) {
+        const result = results.get(hub.vpsProviderId)!;
+        const matches = result.rows.filter(
+          (row) =>
+            (hub.providerInstanceId &&
+              (row.id ?? row.instanceId) === hub.providerInstanceId) ||
+            row.instanceName === hub.instanceName,
+        );
+        if (matches.length > 1)
+          throw new ConflictException(
+            'Identidade de instância ambígua no provider',
+          );
+        const match = matches[0];
+        if (!match) continue;
+        const remoteId = match.id ?? match.instanceId;
+        if (
+          match.instanceName !== hub.instanceName ||
+          (hub.providerInstanceId &&
+            remoteId &&
+            remoteId !== hub.providerInstanceId)
+        ) {
+          throw new ConflictException(
+            'Identidade de instância divergente no provider',
+          );
+        }
+        list.push({
+          ...withInstanceNumber(withoutRelayToken(match), result.adapterType),
+          hubId: hub.id,
+        } as InstanceDto);
+      }
+      return list;
+    } finally {
+      clearTimeout(timer);
     }
-
-    return list;
   }
 
   async fetchInstance(
@@ -364,12 +413,24 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     const raw = await adapter.fetchInstance(ctx, resolved.instanceName);
-    const payload = Array.isArray(raw)
+    const payload: Record<string, unknown> = Array.isArray(raw)
       ? ((raw[0] as InstanceDto | undefined) ?? {})
       : raw;
 
+    const remoteId = payload.id ?? payload.instanceId;
+    if (
+      (payload.instanceName &&
+        payload.instanceName !== resolved.instanceName) ||
+      (resolved.providerInstanceId &&
+        remoteId &&
+        remoteId !== resolved.providerInstanceId)
+    ) {
+      throw new ConflictException(
+        'Identidade de instância divergente no provider',
+      );
+    }
     return {
-      ...withInstanceNumber(payload, resolved.adapterType),
+      ...withInstanceNumber(withoutRelayToken(payload), resolved.adapterType),
       hubId: resolved.instanceId,
     } as InstanceDto;
   }
@@ -445,21 +506,28 @@ export class InstanceService {
     };
     const adapter = this.adapterResolver.resolve(resolved.adapterType);
     await adapter.logoutInstance(ctx, resolved.instanceName);
-    await this.cache.del(`instance:${resolved.instanceId}`);
+    await invalidateInstanceCache(this.cache, {
+      ...resolved,
+      id: resolved.instanceId,
+    });
   }
 
   async deleteInstance(
     product: AuthCachePayload,
     instanceId: string,
   ): Promise<void> {
-    const instance = await this.prisma.instance.findFirst({
+    const instances = await this.prisma.instance.findMany({
       where: {
         productId: product.productId,
         OR: [{ id: instanceId }, { providerInstanceId: instanceId }],
       },
       include: { vpsProvider: true, product: true },
+      take: 2,
     });
 
+    if (instances.length > 1)
+      throw new ConflictException('Identificador de instância ambíguo');
+    const instance = instances[0];
     if (!instance) {
       throw new NotFoundException(`Instância "${instanceId}" não encontrada`);
     }
@@ -472,7 +540,9 @@ export class InstanceService {
         this.encryptionKeyHex,
       ),
     };
-    const adapter = this.adapterResolver.resolve(instance.product.adapterType);
+    const adapter = this.adapterResolver.resolve(
+      instance.vpsProvider.adapterType,
+    );
 
     // Provider primeiro: só remove do Hub se o provider confirmar sucesso
     // (ou se a instância já não existir lá — delete idempotente).

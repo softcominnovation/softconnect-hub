@@ -3,6 +3,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
 export function provisionPersistence<T>(target: T): T {
   const prisma = target as any;
+  prisma.instance.findMany ??= jest.fn(async (args) => {
+    const row = await prisma.instance.findFirst(args);
+    return row ? [row] : [];
+  });
   prisma.$transaction = jest.fn((work) => work(prisma));
   let operation: any;
   let instance: any;

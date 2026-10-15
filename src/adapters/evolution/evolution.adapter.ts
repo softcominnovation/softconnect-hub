@@ -1,3 +1,5 @@
+import { ConflictException } from '@nestjs/common';
+import { withoutRelayToken } from '../../modules/webhook/relay-configuration';
 import {
   BadGatewayException,
   Injectable,
@@ -143,6 +145,10 @@ export class EvolutionAdapter implements WhatsAppProvider {
         ? [raw as Record<string, unknown>]
         : [];
 
+    if (list.length > 1)
+      throw new ConflictException(
+        'Identidade de instância ambígua no provider',
+      );
     const inst = list[0];
     if (!inst) {
       throw new NotFoundException(
@@ -417,12 +423,17 @@ export class EvolutionAdapter implements WhatsAppProvider {
     );
   }
 
-  findWebhook(ctx: ProviderContext, instanceName: string): Promise<WebhookDto> {
-    return this.http.request(
-      'get',
-      ctx.providerUrl,
-      ctx.providerApiKey,
-      `/webhook/find/${instanceName}`,
+  async findWebhook(
+    ctx: ProviderContext,
+    instanceName: string,
+  ): Promise<WebhookDto> {
+    return withoutRelayToken(
+      await this.http.request<WebhookDto>(
+        'get',
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        `/webhook/find/${instanceName}`,
+      ),
     );
   }
 
@@ -466,6 +477,9 @@ export class EvolutionAdapter implements WhatsAppProvider {
       {
         webhook: {
           enabled: dto.enabled,
+          ...(src?.headers && typeof src.headers === 'object'
+            ? { headers: src.headers }
+            : {}),
           url,
           events,
           byEvents,

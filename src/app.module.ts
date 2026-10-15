@@ -8,6 +8,7 @@ import { HealthModule } from './modules/admin/health/health.module';
 import { AdminLogsModule } from './modules/admin/logs/logs.module';
 import { ProductsModule } from './modules/admin/products/products.module';
 import { VpsModule } from './modules/admin/vps/vps.module';
+import { EvolutionsModule } from './modules/admin/evolutions/evolutions.module';
 import { AdminActivityModule } from './modules/admin/activity/activity.module';
 import { DashboardAuthModule } from './modules/admin/dashboard-auth/dashboard-auth.module';
 import { AdminUsersModule } from './modules/admin/users/users.module';
@@ -41,6 +42,7 @@ import { InternalWebhookModule } from './modules/webhook/internal-webhook.module
     AdminAuthModule,
     ProductsModule,
     VpsModule,
+    EvolutionsModule,
     AdminAdaptersModule,
     AdminInstancesModule,
     AdminActivityModule,

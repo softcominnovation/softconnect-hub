@@ -1,7 +1,13 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { decryptAES256GCM } from '../common/crypto.util';
 import { CacheService } from '../cache/cache.service';
+import { instanceCacheKey } from '../cache/instance-cache';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppConfig } from '../config/config.schema';
 
@@ -12,6 +18,8 @@ export interface ResolvedInstance {
   instanceId: string;
   instanceName: string;
   adapterType: string;
+  productId: string;
+  providerInstanceId: string | null;
 }
 
 @Injectable()
@@ -29,95 +37,56 @@ export class InstanceResolverService {
     this.cacheDebug = this.config.get('CACHE_DEBUG', { infer: true }) ?? false;
   }
 
-  async resolve(
-    productId: string,
-    instanceName: string,
-  ): Promise<ResolvedInstance> {
-    const cacheKey = `instance:${productId}:${instanceName}`;
-
-    const t0 = this.cacheDebug ? Date.now() : 0;
-    const cached = await this.cache.get<ResolvedInstance>(cacheKey);
-    if (this.cacheDebug) {
-      const elapsed = Date.now() - t0;
-      if (cached) {
-        this.logger.log(`[CACHE HIT] key=${cacheKey} elapsed=${elapsed}ms`);
-      } else {
-        this.logger.log(`[CACHE MISS] key=${cacheKey} elapsed=${elapsed}ms — querying DB`);
-      }
-    }
-
-    if (cached) return cached;
-
-    const instance = await this.prisma.instance.findFirst({
-      where: { productId, instanceName, isActive: true },
-      include: {
-        vpsProvider: true,
-        product: true,
-      },
-    });
-
-    if (!instance) {
-      throw new NotFoundException(`Instância "${instanceName}" não encontrada`);
-    }
-
-    const resolved: ResolvedInstance = {
-      providerUrl: instance.vpsProvider.providerUrl,
-      providerApiKey: decryptAES256GCM(
-        instance.vpsProvider.providerApiKey,
-        this.encryptionKeyHex,
-      ),
-      vpsProviderId: instance.vpsProviderId,
-      instanceId: instance.id,
-      instanceName: instance.instanceName,
-      adapterType: instance.product.adapterType,
-    };
-
-    await this.cache.setWithTTL(`instance:${instance.id}`, resolved, 300);
-
-    if (this.cacheDebug) {
-      this.logger.log(`[CACHE SET] key=instance:${instance.id} ttl=300s`);
-    }
-
-    return resolved;
+  resolve(productId: string, instanceName: string): Promise<ResolvedInstance> {
+    return this.lookup(productId, 'name', instanceName);
   }
 
-  async resolveById(
+  resolveById(
     productId: string,
     instanceId: string,
   ): Promise<ResolvedInstance> {
-    const cacheKey = `instance:${instanceId}`;
+    return this.lookup(productId, 'id', instanceId);
+  }
 
-    const t0 = this.cacheDebug ? Date.now() : 0;
-    const cached = await this.cache.get<ResolvedInstance>(cacheKey);
-    if (this.cacheDebug) {
-      const elapsed = Date.now() - t0;
-      if (cached) {
-        this.logger.log(`[CACHE HIT] key=${cacheKey} elapsed=${elapsed}ms`);
-      } else {
-        this.logger.log(`[CACHE MISS] key=${cacheKey} elapsed=${elapsed}ms — querying DB`);
-      }
-    }
+  private async lookup(
+    productId: string,
+    kind: 'id' | 'name',
+    identifier: string,
+  ): Promise<ResolvedInstance> {
+    const key = instanceCacheKey(productId, kind, identifier);
+    const cached = await this.cache.get<ResolvedInstance>(key);
+    const hit =
+      cached?.productId === productId &&
+      !!cached.instanceId &&
+      !!cached.vpsProviderId &&
+      (kind === 'name'
+        ? cached.instanceName === identifier
+        : cached.instanceId === identifier ||
+          cached.providerInstanceId === identifier);
+    if (this.cacheDebug)
+      this.logger.log(`[CACHE ${hit ? 'HIT' : 'MISS'}] key=${key}`);
+    if (hit) return cached;
 
-    if (cached) return cached;
-
-    // Aceita UUID do Hub ou providerInstanceId (compat com listagens antigas)
-    const instance = await this.prisma.instance.findFirst({
+    const instances = await this.prisma.instance.findMany({
       where: {
         productId,
         isActive: true,
-        OR: [{ id: instanceId }, { providerInstanceId: instanceId }],
+        ...(kind === 'name'
+          ? { instanceName: identifier }
+          : { OR: [{ id: identifier }, { providerInstanceId: identifier }] }),
       },
-      include: {
-        vpsProvider: true,
-        product: true,
-      },
+      include: { vpsProvider: true, product: true },
+      take: 2,
     });
-
-    if (!instance) {
-      throw new NotFoundException(`Instância "${instanceId}" não encontrada`);
+    if (instances.length > 1)
+      throw new ConflictException('Identificador de instância ambíguo');
+    const instance = instances[0];
+    if (!instance || instance.productId !== productId) {
+      throw new NotFoundException(`Instância "${identifier}" não encontrada`);
     }
-
     const resolved: ResolvedInstance = {
+      productId,
+      providerInstanceId: instance.providerInstanceId,
       providerUrl: instance.vpsProvider.providerUrl,
       providerApiKey: decryptAES256GCM(
         instance.vpsProvider.providerApiKey,
@@ -126,26 +95,11 @@ export class InstanceResolverService {
       vpsProviderId: instance.vpsProviderId,
       instanceId: instance.id,
       instanceName: instance.instanceName,
-      adapterType: instance.product.adapterType,
+      adapterType: instance.vpsProvider.adapterType,
     };
-
-    await this.cache.setWithTTL(`instance:${instance.id}`, resolved, 300);
-    if (
-      instance.providerInstanceId &&
-      instance.providerInstanceId !== instance.id
-    ) {
-      await this.cache.setWithTTL(
-        `instance:${instance.providerInstanceId}`,
-        resolved,
-        300,
-      );
-    }
-
-    if (this.cacheDebug) {
-      this.logger.log(`[CACHE SET] key=instance:${instance.id} ttl=300s`);
-    }
-
+    // Cache only the identifier actually checked for ambiguity, never unchecked aliases.
+    await this.cache.setWithTTL(key, resolved, 300);
+    if (this.cacheDebug) this.logger.log(`[CACHE SET] key=${key} ttl=300s`);
     return resolved;
   }
 }
-

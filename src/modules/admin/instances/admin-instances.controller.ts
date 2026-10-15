@@ -31,6 +31,7 @@ import type { QrRequestContext } from '../../../common/qr-request-context';
 import {
   ImportEvolutionInstanceDto,
   ImportBulkResultDto,
+  ImportBulkSelectionDto,
 } from './dto/import-evolution-instance.dto';
 
 @ApiTags('Admin — Instances')
@@ -306,7 +307,21 @@ export class AdminInstancesController {
   })
   @ApiResponse({ status: 400, description: 'Produto inativo ou sem VPS' })
   @ApiResponse({ status: 404, description: 'Produto não encontrado' })
-  importBulk(@Param('productId') productId: string) {
-    return this.service.importBulkInstances(productId);
+  @ApiQuery({
+    name: 'vpsProviderId',
+    required: false,
+    description: 'Origem vinculada; omissão mantém o padrão',
+  })
+  @ApiBody({ type: ImportBulkSelectionDto, required: false })
+  importBulk(
+    @Param('productId') productId: string,
+    @Query('vpsProviderId') vpsProviderId?: string,
+    @Body() selection?: ImportBulkSelectionDto,
+  ) {
+    return this.service.importBulkInstances(
+      productId,
+      vpsProviderId,
+      selection?.instanceIds,
+    );
   }
 }

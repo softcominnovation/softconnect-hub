@@ -493,7 +493,7 @@ describe('Evolution phase 01 — isolated PostgreSQL', () => {
     } as UpdateProductDto);
     expect(
       await prisma.product.findUnique({ where: { id: created.id } }),
-    ).toMatchObject({ allocationMode: 'legacy', allocationRevision: 0 });
+    ).toMatchObject({ allocationMode: 'legacy', allocationRevision: 1 });
     expect(Object.keys(await products.findOne(created.id)).sort()).toEqual(
       [...productFields].sort(),
     );
@@ -566,9 +566,14 @@ describe('Evolution phase 01 — isolated PostgreSQL', () => {
   });
 
   it('keeps provider and nested VPS responses unchanged, without leaking new fields', async () => {
+    const uncontrolled = await providers.create('vps-test', {
+      label: 'Uncontrolled legacy installation',
+      providerUrl: 'https://legacy-alias-fixture.invalid',
+      providerApiKey: 'fixture-new-key',
+    });
     const provider = await providers.create('vps-test', {
       label: 'Alias',
-      providerUrl: 'HTTPS://EVO-A.INVALID:443/',
+      providerUrl: uncontrolled.providerUrl.toUpperCase() + '/',
       providerApiKey: 'fixture-new-key',
     });
     expect(Object.keys(provider).sort()).toEqual([...providerFields].sort());
@@ -598,6 +603,9 @@ describe('Evolution phase 01 — isolated PostgreSQL', () => {
 
   it('preserves individual and bulk import contracts, linking each successful insert', async () => {
     const http = { request: jest.fn() };
+    http.request.mockResolvedValue([
+      { id: 'remote-single', name: 'single', token: 'fixture-token' },
+    ]);
     const admin = new AdminInstancesService(
       db,
       {} as InstanceService,

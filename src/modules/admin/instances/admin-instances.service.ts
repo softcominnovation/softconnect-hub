@@ -1,11 +1,18 @@
 import {
   BadRequestException,
+  BadGatewayException,
+  ConflictException,
+  HttpException,
+  Optional,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { createLinkedInstance } from '../../../prisma/evolution-links';
+import { importLinkedInstance } from '../../../prisma/evolution-links';
+import { CacheService } from '../../../cache/cache.service';
+import { invalidateInstanceCache } from '../../../cache/instance-cache';
+import { AuditService } from '../../../audit/audit.service';
 import { AuthCachePayload } from '../../../auth/apikey.guard';
 import { InstanceService } from '../../instance/instance.service';
 import { MessageService } from '../../message/message.service';
@@ -40,6 +47,8 @@ export class AdminInstancesService {
     private readonly messageService: MessageService,
     private readonly evolutionHttp: EvolutionHttpService,
     private readonly config: ConfigService,
+    @Optional() private readonly cache?: CacheService,
+    @Optional() private readonly audit?: AuditService,
   ) {
     this.encryptionKeyHex = this.config.getOrThrow<string>('ENCRYPTION_KEY');
   }
@@ -213,191 +222,186 @@ export class AdminInstancesService {
     return instance;
   }
 
+  private async importSource(productId: string, selected?: string) {
+    if (
+      selected !== undefined &&
+      (typeof selected !== 'string' || !selected.trim())
+    )
+      throw new BadRequestException('vpsProviderId inválido');
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+    });
+    if (!product)
+      throw new NotFoundException(`Produto ${productId} não encontrado`);
+    if (!product.isActive) throw new BadRequestException('Produto inativo');
+    const id = selected ?? product.vpsProviderId;
+    if (!id) throw new BadRequestException('Produto sem VpsProvider associado');
+    const link = await this.prisma.productEvolution.findUnique({
+      where: { productId_vpsProviderId: { productId, vpsProviderId: id } },
+    });
+    if (!link)
+      throw new BadRequestException('Provider não vinculado ao produto');
+    const provider = await this.prisma.vpsProvider.findUnique({
+      where: { id, isActive: true },
+    });
+    if (!provider)
+      throw new NotFoundException('VpsProvider nao encontrado ou inativo');
+    if (provider.adapterType !== 'evolution')
+      throw new BadRequestException('Origem não é Evolution');
+    return provider;
+  }
+
+  private async remoteImportRows(
+    provider: Awaited<ReturnType<AdminInstancesService['importSource']>>,
+  ) {
+    const response = await this.evolutionHttp.request<unknown>(
+      'get',
+      provider.providerUrl,
+      decryptAES256GCM(provider.providerApiKey, this.encryptionKeyHex),
+      '/instance/fetchInstances',
+    );
+    if (!Array.isArray(response))
+      throw new BadGatewayException('Resposta de inventário inválida');
+    const rows = this.normalizeEvolutionFetchResponse(response);
+    if (
+      rows.some((row) => !row || typeof row !== 'object' || Array.isArray(row))
+    )
+      throw new BadGatewayException('Resposta de inventário inválida');
+    return rows.map((row) => this.extractEvolutionInstanceFields(row));
+  }
+
+  private async assignImported(
+    productId: string,
+    provider: Awaited<ReturnType<AdminInstancesService['importSource']>>,
+    row: ReturnType<AdminInstancesService['extractEvolutionInstanceFields']>,
+    number = row.evNumber,
+  ) {
+    if (!row.evId || !row.evName)
+      throw new BadRequestException('Identidade incompleta na Evolution');
+    const assigned = await importLinkedInstance(
+      this.prisma,
+      {
+        productId,
+        vpsProviderId: provider.id,
+        instanceName: row.evName,
+        providerInstanceId: row.evId,
+        instanceToken: row.evToken || null,
+        hubToken: `hub_${productId}_${row.evName}`,
+        phoneNumber: number ?? null,
+        status: this.normalizeConnectionStatus(row.evStatus),
+        isActive: true,
+      },
+      provider,
+    );
+    if (this.cache)
+      await invalidateInstanceCache(this.cache, assigned.instance);
+    this.audit?.log({
+      productId,
+      instanceId: assigned.instance.id,
+      endpoint: '/admin/instances/import',
+      method: 'POST',
+      statusCode: 201,
+      latencyMs: 0,
+      ip: 'internal',
+      origin: `evolution:${provider.id}:${assigned.result}`,
+    });
+    return { result: assigned.result, hubInstanceId: assigned.instance.id };
+  }
+
   async importSingleInstance(
     productId: string,
     dto: ImportEvolutionInstanceDto,
   ): Promise<{ result: 'created' | 'skipped'; hubInstanceId: string }> {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-      select: { id: true, vpsProviderId: true, isActive: true },
-    });
-
-    if (!product)
-      throw new NotFoundException(`Produto ${productId} não encontrado`);
-    if (!product.isActive) throw new BadRequestException('Produto inativo');
-    if (!product.vpsProviderId)
-      throw new BadRequestException('Produto sem VpsProvider associado');
-
-    const existing = await this.prisma.instance.findFirst({
-      where: { productId, providerInstanceId: dto.id },
-      select: { id: true },
-    });
-
-    if (existing) {
-      this.logger.log(
-        `[admin:import:single] skipped — providerInstanceId=${dto.id} já vinculado ao produto ${productId}`,
-      );
-      return { result: 'skipped', hubInstanceId: existing.id };
-    }
-
-    const hubToken = `hub_${productId}_${dto.name}`;
-
-    const tokenConflict = await this.prisma.instance.findUnique({
-      where: { hubToken },
-      select: { id: true },
-    });
-
-    const finalHubToken = tokenConflict
-      ? `hub_${productId}_${dto.name}_${dto.id.slice(0, 8)}`
-      : hubToken;
-
-    const status = this.normalizeConnectionStatus(dto.connectionStatus);
-
-    const created = await createLinkedInstance(this.prisma, {
-      productId,
-      vpsProviderId: product.vpsProviderId,
-      instanceName: dto.name,
-      providerInstanceId: dto.id,
-      instanceToken: dto.token,
-      hubToken: finalHubToken,
-      phoneNumber: dto.number ?? null,
-      status,
-      isActive: true,
-    });
-
-    this.logger.log(
-      `[admin:import:single] created — instanceName=${dto.name} providerInstanceId=${dto.id} hubInstanceId=${created.id}`,
+    if (
+      typeof dto?.id !== 'string' ||
+      !dto.id ||
+      typeof dto.name !== 'string' ||
+      !dto.name
+    )
+      throw new BadRequestException('ID e nome da instância são obrigatórios');
+    const provider = await this.importSource(productId, dto.vpsProviderId);
+    const rows = await this.remoteImportRows(provider);
+    const matches = rows.filter(
+      (row) => row.evId === dto.id || row.evName === dto.name,
     );
-
-    return { result: 'created', hubInstanceId: created.id };
+    if (
+      matches.length !== 1 ||
+      matches[0].evId !== dto.id ||
+      matches[0].evName !== dto.name
+    )
+      throw new ConflictException(
+        'Origem ou identidade da instância não comprovada',
+      );
+    return this.assignImported(
+      productId,
+      provider,
+      matches[0],
+      dto.number ?? matches[0].evNumber,
+    );
   }
 
-  async importBulkInstances(productId: string): Promise<ImportBulkResultDto> {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-      select: { id: true, vpsProviderId: true, isActive: true },
-    });
-
-    if (!product)
-      throw new NotFoundException(`Produto ${productId} não encontrado`);
-    if (!product.isActive) throw new BadRequestException('Produto inativo');
-    if (!product.vpsProviderId)
-      throw new BadRequestException('Produto sem VpsProvider associado');
-
-    const vps = await this.prisma.vpsProvider.findUnique({
-      where: { id: product.vpsProviderId, isActive: true },
-      select: { id: true, providerUrl: true, providerApiKey: true },
-    });
-
-    if (!vps)
-      throw new NotFoundException('VpsProvider nao encontrado ou inativo');
-
-    const decryptedApiKey = decryptAES256GCM(
-      vps.providerApiKey,
-      this.encryptionKeyHex,
-    );
-
-    const rawResponse = await this.evolutionHttp.request<unknown>(
-      'get',
-      vps.providerUrl,
-      decryptedApiKey,
-      '/instance/fetchInstances',
-    );
-
-    const instances = this.normalizeEvolutionFetchResponse(rawResponse);
-
-    this.logger.log(
-      `[admin:import:bulk] productId=${productId} — ${instances.length} instâncias encontradas na Evolution`,
-    );
-
+  async importBulkInstances(
+    productId: string,
+    selected?: string,
+    instanceIds?: string[],
+  ): Promise<ImportBulkResultDto> {
+    if (
+      instanceIds !== undefined &&
+      (!Array.isArray(instanceIds) ||
+        !instanceIds.length ||
+        instanceIds.some((id) => typeof id !== 'string' || !id.trim()) ||
+        new Set(instanceIds).size !== instanceIds.length)
+    )
+      throw new BadRequestException(
+        'instanceIds deve conter IDs distintos e não vazios',
+      );
+    const provider = await this.importSource(productId, selected);
+    const all = await this.remoteImportRows(provider);
+    const rows = instanceIds
+      ? all.filter((row) => instanceIds.includes(row.evId))
+      : all;
     const details: ImportBulkItemResultDto[] = [];
-    let created = 0;
-    let skipped = 0;
-    let errors = 0;
-
-    for (const inst of instances) {
-      const { evId, evName, evToken, evNumber, evStatus } =
-        this.extractEvolutionInstanceFields(inst);
-
-      const displayName = evName || 'unknown';
-
-      if (!evId) {
+    let created = 0,
+      skipped = 0,
+      errors = 0;
+    for (const row of rows) {
+      try {
+        if (!row.evId)
+          throw new BadRequestException(
+            'id ausente na resposta da Evolution — não foi possível identificar a instância',
+          );
+        if (
+          all.filter(
+            (other) => other.evId === row.evId || other.evName === row.evName,
+          ).length !== 1
+        )
+          throw new ConflictException('Identidade ambígua na Evolution');
+        const assigned = await this.assignImported(productId, provider, row);
+        if (assigned.result === 'created') created++;
+        else skipped++;
+        details.push({ instanceName: row.evName || 'unknown', ...assigned });
+      } catch (error) {
         errors++;
         details.push({
-          instanceName: displayName,
+          instanceName: row.evName || 'unknown',
           result: 'error',
           reason:
-            'id ausente na resposta da Evolution — não foi possível identificar a instância',
+            error instanceof HttpException
+              ? error.message
+              : 'Falha ao registrar instância; vínculo preservado',
         });
-        this.logger.warn(
-          `[admin:import:bulk] id ausente para instância "${displayName}" — pulando`,
-        );
-        continue;
-      }
-
-      try {
-        const existing = await this.prisma.instance.findFirst({
-          where: { productId, providerInstanceId: evId },
-          select: { id: true },
-        });
-
-        if (existing) {
-          skipped++;
-          details.push({
-            instanceName: displayName,
-            result: 'skipped',
-            hubInstanceId: existing.id,
-          });
-          continue;
-        }
-
-        const hubToken = `hub_${productId}_${evName}`;
-        const tokenConflict = await this.prisma.instance.findUnique({
-          where: { hubToken },
-          select: { id: true },
-        });
-        const finalHubToken = tokenConflict
-          ? `hub_${productId}_${evName}_${evId.slice(0, 8)}`
-          : hubToken;
-
-        const status = this.normalizeConnectionStatus(evStatus);
-
-        const record = await createLinkedInstance(this.prisma, {
-          productId,
-          vpsProviderId: vps.id,
-          instanceName: evName,
-          providerInstanceId: evId,
-          instanceToken: evToken || null,
-          hubToken: finalHubToken,
-          phoneNumber: evNumber ?? null,
-          status,
-          isActive: true,
-        });
-
-        created++;
-        details.push({
-          instanceName: displayName,
-          result: 'created',
-          hubInstanceId: record.id,
-        });
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        errors++;
-        details.push({
-          instanceName: displayName,
-          result: 'error',
-          reason: message,
-        });
-        this.logger.warn(
-          `[admin:import:bulk] error on instance ${displayName}: ${message}`,
-        );
       }
     }
-
-    this.logger.log(
-      `[admin:import:bulk] productId=${productId} — created=${created} skipped=${skipped} errors=${errors}`,
-    );
-
+    for (const id of instanceIds ?? []) {
+      if (!all.some((row) => row.evId === id)) {
+        errors++;
+        details.push({
+          instanceName: 'unknown',
+          result: 'error',
+          reason: 'ID selecionado não encontrado na origem',
+        });
+      }
+    }
     return { created, skipped, errors, details };
   }
 

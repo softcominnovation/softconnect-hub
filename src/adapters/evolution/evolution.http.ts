@@ -1,3 +1,4 @@
+import { withoutRelayToken } from '../../modules/webhook/relay-configuration';
 import {
   HttpException,
   Injectable,
@@ -198,7 +199,7 @@ export class EvolutionHttpService {
       try {
         const fullUrl = `${vpsUrl}${path}`;
         this.logger.log(
-          `[evo:request] ${method.toUpperCase()} ${fullUrl}${data !== undefined ? ` body=${JSON.stringify(data)}` : ''}`,
+          `[evo:request] ${method.toUpperCase()} ${fullUrl}${data !== undefined ? ` body=${JSON.stringify(withoutRelayToken(data))}` : ''}`,
         );
         const response = await this.client.request<T>({
           method,
@@ -212,7 +213,7 @@ export class EvolutionHttpService {
       } catch (err) {
         if (axios.isAxiosError(err) && err.response) {
           throw new HttpException(
-            err.response.data as Record<string, unknown>,
+            withoutRelayToken(err.response.data) as Record<string, unknown>,
             err.response.status,
           );
         }
@@ -277,7 +278,7 @@ export class EvolutionHttpService {
       if (axios.isAxiosError(error) && error.response) {
         execution.failureSource = 'upstream_http';
         throw new HttpException(
-          error.response.data as Record<string, unknown>,
+          withoutRelayToken(error.response.data) as Record<string, unknown>,
           error.response.status,
         );
       }

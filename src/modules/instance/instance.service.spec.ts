@@ -40,7 +40,7 @@ const PRODUCT = {
   apiKeyHash: 'hash',
   isActive: true,
   origins: [] as string[],
-  hubRelay: true,
+  hubRelay: false,
   adapterType: 'evolution',
   vpsProviderId: 'vp-1',
   batchWebhookEnabled: false,

@@ -1,4 +1,8 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -42,9 +46,16 @@ export class EvolutionInventoryService {
     );
   }
 
-  async request(providerId: string) {
+  async request(providerId: string, expectedRevision?: number) {
     return this.prisma.$transaction(async (tx) => {
-      await lockProvider(tx, providerId);
+      const provider = await lockProvider(tx, providerId);
+      if (
+        expectedRevision !== undefined &&
+        provider.configurationRevision !== expectedRevision
+      )
+        throw new ConflictException(
+          'Configuração alterada; consulte novamente',
+        );
       const active = await tx.evolutionReconciliation.findFirst({
         where: {
           vpsProviderId: providerId,
@@ -233,45 +244,52 @@ export class EvolutionInventoryService {
   }
 
   async readOccupancy(tx: Prisma.TransactionClient, providerId: string) {
-    const [provider, remote, instances, reservations, reconciliation] =
-      await Promise.all([
-        tx.vpsProvider.findUniqueOrThrow({ where: { id: providerId } }),
-        tx.evolutionInventoryEntry.findMany({
-          where: { vpsProviderId: providerId },
-        }),
-        tx.instance.findMany({ where: { vpsProviderId: providerId } }),
-        tx.instanceProvisioning.findMany({
-          where: {
-            vpsProviderId: providerId,
-            state: { in: OPEN_PROVISIONING_STATES },
-          },
-        }),
-        tx.evolutionReconciliation.findFirst({
-          where: { vpsProviderId: providerId, status: 'completed' },
-          orderBy: { collectionFinishedAt: 'desc' },
-        }),
-      ]);
-    const result = reconciliation?.result as {
-      inventoryRevision?: number;
-      absentInstanceIds?: string[];
-    } | null;
-    const absence = new Set(
-      result?.inventoryRevision === provider.inventoryRevision
-        ? instances
-            .filter(
-              (item) =>
-                reconciliation?.collectionStartedAt &&
-                item.updatedAt <= reconciliation.collectionStartedAt &&
-                result.absentInstanceIds?.includes(item.id),
-            )
-            .map((item) => item.id)
-        : [],
-    );
-    return {
-      ...occupancy(remote, instances, reservations, absence),
-      instances,
-      reservations,
-      remote,
-    };
+    return readEvolutionOccupancy(tx, providerId);
   }
+}
+
+export async function readEvolutionOccupancy(
+  tx: Prisma.TransactionClient,
+  providerId: string,
+) {
+  const [provider, remote, instances, reservations, reconciliation] =
+    await Promise.all([
+      tx.vpsProvider.findUniqueOrThrow({ where: { id: providerId } }),
+      tx.evolutionInventoryEntry.findMany({
+        where: { vpsProviderId: providerId },
+      }),
+      tx.instance.findMany({ where: { vpsProviderId: providerId } }),
+      tx.instanceProvisioning.findMany({
+        where: {
+          vpsProviderId: providerId,
+          state: { in: OPEN_PROVISIONING_STATES },
+        },
+      }),
+      tx.evolutionReconciliation.findFirst({
+        where: { vpsProviderId: providerId, status: 'completed' },
+        orderBy: { collectionFinishedAt: 'desc' },
+      }),
+    ]);
+  const result = reconciliation?.result as {
+    inventoryRevision?: number;
+    absentInstanceIds?: string[];
+  } | null;
+  const absence = new Set(
+    result?.inventoryRevision === provider.inventoryRevision
+      ? instances
+          .filter(
+            (item) =>
+              reconciliation?.collectionStartedAt &&
+              item.updatedAt <= reconciliation.collectionStartedAt &&
+              result.absentInstanceIds?.includes(item.id),
+          )
+          .map((item) => item.id)
+      : [],
+  );
+  return {
+    ...occupancy(remote, instances, reservations, absence),
+    instances,
+    reservations,
+    remote,
+  };
 }

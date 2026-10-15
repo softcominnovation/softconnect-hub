@@ -1,285 +1,173 @@
-import { Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Test, TestingModule } from '@nestjs/testing';
 import { CacheService } from '../cache/cache.service';
+import {
+  instanceCacheKey,
+  invalidateInstanceCache,
+} from '../cache/instance-cache';
+import { encryptAES256GCM } from '../common/crypto.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { InstanceResolverService } from './instance.resolver';
 
-const MOCK_ENCRYPTION_KEY = 'a'.repeat(64);
-
-const mockVpsProvider = {
-  providerUrl: 'https://evo.example.com',
-  providerApiKey: 'encrypted-key',
-};
-
-const mockInstance = {
-  id: 'inst-1',
-  productId: 'prod-1',
-  vpsProviderId: 'vps-provider-1',
-  instanceName: 'test-instance',
-  isActive: true,
-  vpsProvider: mockVpsProvider,
-  product: { adapterType: 'evolution' },
-};
-
-const mockCache = {
-  get: jest.fn(),
-  setWithTTL: jest.fn(),
-};
-
-const mockPrisma = {
-  instance: {
-    findFirst: jest.fn(),
-    findUnique: jest.fn(),
+const key = 'a'.repeat(64);
+const row = {
+  id: 'hub-a',
+  productId: 'product-a',
+  instanceName: 'same-name',
+  providerInstanceId: 'external-a',
+  vpsProviderId: 'host-a',
+  vpsProvider: {
+    adapterType: 'evolution',
+    providerUrl: 'https://a.invalid',
+    providerApiKey: encryptAES256GCM('key-a', key),
+    isActive: false,
+    maxInstances: 1,
+    acceptingNewInstances: false,
   },
 };
 
-function makeConfig(cacheDebug = false) {
-  return {
-    getOrThrow: jest.fn().mockReturnValue(MOCK_ENCRYPTION_KEY),
-    get: jest.fn().mockImplementation((key: string) => {
-      if (key === 'CACHE_DEBUG') return cacheDebug;
-      return undefined;
+describe('InstanceResolverService — product-scoped identity', () => {
+  const values = new Map<string, unknown>();
+  const cache = {
+    get: jest.fn((id: string) => Promise.resolve(values.get(id) ?? null)),
+    setWithTTL: jest.fn((id: string, value: unknown) => {
+      values.set(id, value);
+      return Promise.resolve();
+    }),
+    del: jest.fn((id: string) => {
+      values.delete(id);
+      return Promise.resolve();
     }),
   };
-}
-
-jest.mock('../common/crypto.util', () => ({
-  decryptAES256GCM: jest.fn().mockReturnValue('decrypted-api-key'),
-  hashSHA256: jest.fn().mockReturnValue('hash'),
-  generateApiKey: jest.fn().mockReturnValue('key'),
-  encryptAES256GCM: jest.fn().mockReturnValue('encrypted'),
-}));
-
-describe('InstanceResolverService', () => {
-  let service: InstanceResolverService;
-
-  beforeEach(async () => {
-    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        InstanceResolverService,
-        { provide: CacheService, useValue: mockCache },
-        { provide: PrismaService, useValue: mockPrisma },
-        { provide: ConfigService, useValue: makeConfig() },
-      ],
-    }).compile();
-
-    service = module.get<InstanceResolverService>(InstanceResolverService);
+  const prisma = { instance: { findMany: jest.fn() } };
+  let resolver: InstanceResolverService;
+  beforeEach(() => {
+    values.clear();
     jest.clearAllMocks();
+    prisma.instance.findMany.mockResolvedValue([row]);
+    resolver = new InstanceResolverService(
+      cache as unknown as CacheService,
+      prisma as unknown as PrismaService,
+      new ConfigService({ ENCRYPTION_KEY: key, CACHE_DEBUG: true }),
+    );
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
   });
 
-  describe('resolve', () => {
-    it('should return cached data on Redis HIT', async () => {
-      const cached = {
-        providerUrl: 'https://evo.example.com',
-        providerApiKey: 'decrypted-api-key',
-        vpsProviderId: 'vps-provider-1',
-        instanceId: 'inst-1',
-        instanceName: 'test-instance',
-        adapterType: 'evolution',
-      };
-      mockCache.get.mockResolvedValueOnce(cached);
-
-      const result = await service.resolve('prod-1', 'test-instance');
-
-      expect(mockCache.get).toHaveBeenCalledWith(
-        'instance:prod-1:test-instance',
-      );
-      expect(mockPrisma.instance.findFirst).not.toHaveBeenCalled();
-      expect(result).toEqual(cached);
-    });
-
-    it('should query Postgres on Redis MISS and cache the result', async () => {
-      mockCache.get.mockResolvedValueOnce(null);
-      mockPrisma.instance.findFirst.mockResolvedValueOnce(mockInstance);
-      mockCache.setWithTTL.mockResolvedValueOnce(undefined);
-
-      const result = await service.resolve('prod-1', 'test-instance');
-
-      expect(mockPrisma.instance.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            productId: 'prod-1',
-            instanceName: 'test-instance',
-            isActive: true,
-          },
-        }),
-      );
-      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
-        'instance:inst-1',
-        expect.objectContaining({
-          instanceId: 'inst-1',
-          vpsProviderId: 'vps-provider-1',
-          instanceName: 'test-instance',
-        }),
-        300,
-      );
-      expect(result.adapterType).toBe('evolution');
-      expect(result.instanceId).toBe('inst-1');
-      expect(result.instanceName).toBe('test-instance');
-    });
-
-    it('should throw NotFoundException when instance is not found', async () => {
-      mockCache.get.mockResolvedValueOnce(null);
-      mockPrisma.instance.findFirst.mockResolvedValueOnce(null);
-
-      await expect(service.resolve('prod-1', 'ghost-instance')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-
-  describe('resolveById', () => {
-    it('should return cached data on Redis HIT', async () => {
-      const cached = {
-        providerUrl: 'https://evo.example.com',
-        providerApiKey: 'decrypted-api-key',
-        vpsProviderId: 'vps-provider-1',
-        instanceId: 'inst-1',
-        instanceName: 'test-instance',
-        adapterType: 'evolution',
-      };
-      mockCache.get.mockResolvedValueOnce(cached);
-
-      const result = await service.resolveById('prod-1', 'inst-1');
-
-      expect(mockCache.get).toHaveBeenCalledWith('instance:inst-1');
-      expect(mockPrisma.instance.findFirst).not.toHaveBeenCalled();
-      expect(result).toEqual(cached);
-    });
-
-    it('should query Postgres on Redis MISS and cache the result', async () => {
-      mockCache.get.mockResolvedValueOnce(null);
-      mockPrisma.instance.findFirst.mockResolvedValueOnce(mockInstance);
-      mockCache.setWithTTL.mockResolvedValueOnce(undefined);
-
-      const result = await service.resolveById('prod-1', 'inst-1');
-
-      expect(mockPrisma.instance.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            productId: 'prod-1',
-            isActive: true,
-            OR: [{ id: 'inst-1' }, { providerInstanceId: 'inst-1' }],
-          },
-        }),
-      );
-      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
-        'instance:inst-1',
-        expect.objectContaining({
-          instanceId: 'inst-1',
-          instanceName: 'test-instance',
-        }),
-        300,
-      );
-      expect(result.instanceName).toBe('test-instance');
-    });
-
-    it('should resolve by providerInstanceId when Hub id is not used', async () => {
-      mockCache.get.mockResolvedValueOnce(null);
-      mockPrisma.instance.findFirst.mockResolvedValueOnce({
-        ...mockInstance,
-        providerInstanceId: 'evo-uuid-1',
+  it.each(['id', 'name'] as const)(
+    'uses the same scoped %s key on miss and hit, retaining TTL and host',
+    async (kind) => {
+      const id = kind === 'id' ? row.id : row.instanceName;
+      const read = () =>
+        kind === 'id'
+          ? resolver.resolveById(row.productId, id)
+          : resolver.resolve(row.productId, id);
+      const first = await read();
+      const hit = await read();
+      expect(hit).toEqual(first);
+      expect(first).toMatchObject({
+        productId: row.productId,
+        instanceId: row.id,
+        vpsProviderId: row.vpsProviderId,
+        providerApiKey: 'key-a',
       });
-      mockCache.setWithTTL.mockResolvedValue(undefined);
-
-      const result = await service.resolveById('prod-1', 'evo-uuid-1');
-
-      expect(mockPrisma.instance.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            productId: 'prod-1',
-            isActive: true,
-            OR: [
-              { id: 'evo-uuid-1' },
-              { providerInstanceId: 'evo-uuid-1' },
-            ],
-          },
-        }),
-      );
-      expect(result.instanceId).toBe('inst-1');
-      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
-        'instance:inst-1',
-        expect.any(Object),
+      expect(cache.setWithTTL).toHaveBeenCalledWith(
+        instanceCacheKey(row.productId, kind, id),
+        first,
         300,
       );
-      expect(mockCache.setWithTTL).toHaveBeenCalledWith(
-        'instance:evo-uuid-1',
-        expect.any(Object),
-        300,
-      );
-    });
+      expect(prisma.instance.findMany).toHaveBeenCalledTimes(1);
+    },
+  );
 
-    it('should throw NotFoundException when instance is not found', async () => {
-      mockCache.get.mockResolvedValueOnce(null);
-      mockPrisma.instance.findFirst.mockResolvedValueOnce(null);
-
-      await expect(service.resolveById('prod-1', 'inst-999')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-
-    it('should throw NotFoundException when productId does not match (cross-product access)', async () => {
-      mockCache.get.mockResolvedValueOnce(null);
-      mockPrisma.instance.findFirst.mockResolvedValueOnce(null);
-
-      await expect(service.resolveById('prod-OTHER', 'inst-1')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
+  it('accepts external ID only after checking all matching identities', async () => {
+    const result = await resolver.resolveById(
+      row.productId,
+      row.providerInstanceId,
+    );
+    expect(result.instanceId).toBe(row.id);
+    expect(prisma.instance.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          productId: row.productId,
+          isActive: true,
+          OR: [
+            { id: row.providerInstanceId },
+            { providerInstanceId: row.providerInstanceId },
+          ],
+        },
+        take: 2,
+      }),
+    );
+    expect(cache.setWithTTL).toHaveBeenCalledTimes(1);
   });
 
-  describe('resolve — CACHE_DEBUG=true', () => {
-    beforeEach(async () => {
-      const module: TestingModule = await Test.createTestingModule({
-        providers: [
-          InstanceResolverService,
-          { provide: CacheService, useValue: mockCache },
-          { provide: PrismaService, useValue: mockPrisma },
-          { provide: ConfigService, useValue: makeConfig(true) },
-        ],
-      }).compile();
+  it('does not consume legacy unscoped cache entries', async () => {
+    values.set(`instance:${row.id}`, { instanceId: 'foreign' });
+    await resolver.resolveById(row.productId, row.id);
+    expect(cache.get).toHaveBeenCalledWith(
+      instanceCacheKey(row.productId, 'id', row.id),
+    );
+    expect(prisma.instance.findMany).toHaveBeenCalledTimes(1);
+  });
 
-      service = module.get<InstanceResolverService>(InstanceResolverService);
-      jest.clearAllMocks();
-    });
+  it('rejects a cross-product cached payload and a foreign database result', async () => {
+    const resolved = await resolver.resolveById(row.productId, row.id);
+    values.set(instanceCacheKey('foreign', 'id', row.id), resolved);
+    await expect(
+      resolver.resolveById('foreign', row.id),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.instance.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ productId: 'foreign' }) as unknown,
+      }),
+    );
+  });
 
-    it('should log CACHE HIT when key is found in Redis', async () => {
-      const logSpy = jest.spyOn(Logger.prototype, 'log');
-      const cached = {
-        providerUrl: 'https://evo.example.com',
-        providerApiKey: 'decrypted-api-key',
-        vpsProviderId: 'vps-provider-1',
-        instanceId: 'inst-1',
-        instanceName: 'test-instance',
-        adapterType: 'evolution',
-      };
-      mockCache.get.mockResolvedValueOnce(cached);
+  it('does not confuse names and IDs with the same text', async () => {
+    await resolver.resolveById(row.productId, row.id);
+    prisma.instance.findMany.mockResolvedValue([]);
+    await expect(
+      resolver.resolve(row.productId, row.id),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-      await service.resolve('prod-1', 'test-instance');
+  it('returns 409 for repeated external IDs across hosts without caching a winner', async () => {
+    prisma.instance.findMany.mockResolvedValue([
+      row,
+      { ...row, id: 'hub-b', vpsProviderId: 'host-b' },
+    ]);
+    await expect(
+      resolver.resolveById(row.productId, row.providerInstanceId),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(cache.setWithTTL).not.toHaveBeenCalled();
+  });
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[CACHE HIT]'),
-      );
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('instance:prod-1:test-instance'),
-      );
-    });
+  it('returns 404 when the scoped instance is absent', async () => {
+    prisma.instance.findMany.mockResolvedValue([]);
+    await expect(
+      resolver.resolveById(row.productId, row.id),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-    it('should log CACHE MISS and CACHE SET on DB fallback', async () => {
-      const logSpy = jest.spyOn(Logger.prototype, 'log');
-      mockCache.get.mockResolvedValueOnce(null);
-      mockPrisma.instance.findFirst.mockResolvedValueOnce(mockInstance);
-      mockCache.setWithTTL.mockResolvedValueOnce(undefined);
+  it('does not accept a cache entry for another identifier', async () => {
+    const resolved = await resolver.resolveById(row.productId, row.id);
+    values.set(instanceCacheKey(row.productId, 'id', 'other'), resolved);
+    prisma.instance.findMany.mockResolvedValue([]);
+    await expect(
+      resolver.resolveById(row.productId, 'other'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-      await service.resolve('prod-1', 'test-instance');
-
-      const messages = logSpy.mock.calls.map((c) => c[0] as string);
-      expect(messages.some((m) => m.includes('[CACHE MISS]'))).toBe(true);
-      expect(messages.some((m) => m.includes('[CACHE SET]'))).toBe(true);
-    });
+  it('invalidates the Hub ID, external ID and name aliases without touching other products', async () => {
+    const other = instanceCacheKey('other', 'name', row.instanceName);
+    values.set(other, { fixture: true });
+    for (const [kind, id] of [
+      ['id', row.id],
+      ['id', row.providerInstanceId],
+      ['name', row.instanceName],
+    ] as const)
+      values.set(instanceCacheKey(row.productId, kind, id), {});
+    await invalidateInstanceCache(cache as unknown as CacheService, row);
+    expect([...values.keys()]).toEqual([other]);
   });
 });

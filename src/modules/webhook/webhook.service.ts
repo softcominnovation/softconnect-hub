@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { relayWebhook } from './relay-configuration';
 import { ConfigService } from '@nestjs/config';
 import type { AuthCachePayload } from '../../auth/apikey.guard';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
@@ -12,18 +14,12 @@ import { InstanceResolverService } from '../../resolver/instance.resolver';
 
 @Injectable()
 export class WebhookService {
-  private readonly baseUrl: string;
-
   constructor(
     private readonly adapterResolver: AdapterResolverService,
     private readonly instanceResolver: InstanceResolverService,
     private readonly config: ConfigService,
-  ) {
-    this.baseUrl = this.config.get<string>(
-      'HUB_BASE_URL',
-      'http://localhost:3000',
-    );
-  }
+    private readonly prisma: PrismaService,
+  ) {}
 
   async setWebhook(
     product: AuthCachePayload,
@@ -41,10 +37,12 @@ export class WebhookService {
 
     const effectiveDto: SetWebhookDto = product.hubRelay
       ? {
-          webhook: {
-            ...dto.webhook,
-            url: `${this.baseUrl}/internal/webhook/${resolved.adapterType}`,
-          },
+          webhook: await relayWebhook(
+            this.prisma,
+            this.config,
+            resolved.vpsProviderId,
+            dto.webhook,
+          ),
         }
       : dto;
 

@@ -1,6 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ImportEvolutionInstanceDto {
+  @ApiPropertyOptional({
+    description:
+      'Origem vinculada ao produto; omissão mantém o provider padrão',
+  })
+  vpsProviderId?: string;
   @ApiProperty({
     description:
       'ID da instância na Evolution (campo "id" do fetchInstances — equivalente ao instanceId da criação)',
@@ -31,6 +36,15 @@ export class ImportEvolutionInstanceDto {
     example: '558391206116',
   })
   number?: string;
+}
+
+export class ImportBulkSelectionDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'IDs remotos a importar; omissão mantém Importar todas. Lista vazia é inválida.',
+  })
+  instanceIds?: string[];
 }
 
 export class ImportBulkResultDto {

@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import { QR_FINISH_MARGIN_MS } from '../common/qr-request-context';
 
@@ -80,6 +81,14 @@ export const configSchema = z
     HUB_MONITOR_API_KEY: z.string().optional(),
     RUNTIME_MODE: z.enum(['api', 'worker-batch']).default('api'),
     WORKER_CONCURRENCY: z.coerce.number().min(1).max(100).default(10),
+    RELAY_TRUSTED_PROXY_IPS: z
+      .string()
+      .default('')
+      .refine(
+        (value) =>
+          !value || value.split(',').every((ip) => isIP(ip.trim()) !== 0),
+        'Informe IPs de proxies confiáveis separados por vírgula',
+      ),
     RELAY_CONCURRENCY: z.coerce.number().min(1).max(100).default(20),
   })
   .refine(

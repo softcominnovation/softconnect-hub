@@ -11,5 +11,6 @@ import { VpsProviderService } from './vps-provider.service';
   imports: [AuthModule, CacheModule, PrismaModule],
   controllers: [VpsController, VpsProviderController],
   providers: [VpsService, VpsProviderService],
+  exports: [VpsProviderService],
 })
 export class VpsModule {}

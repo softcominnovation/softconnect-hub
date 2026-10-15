@@ -1,3 +1,4 @@
+import { relayWebhook } from '../../webhook/relay-configuration';
 import {
   BadRequestException,
   ConflictException,
@@ -19,6 +20,7 @@ import {
 } from '../../../common/crypto.util';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ensureEvolutionLink } from '../../../prisma/evolution-links';
+import { lockProduct, lockProvider } from '../../provisioning/evolution-locks';
 import {
   LegacyProduct,
   legacyProduct,
@@ -141,6 +143,24 @@ export class ProductsService {
 
     try {
       const updated = await this.prisma.$transaction(async (tx) => {
+        const current = await lockProduct(tx, id);
+        for (const providerId of [
+          ...new Set(
+            [current.vpsProviderId, dto.vpsProviderId].filter(
+              (value): value is string => !!value,
+            ),
+          ),
+        ].sort()) {
+          try {
+            await lockProvider(tx, providerId);
+          } catch (error) {
+            if (error instanceof NotFoundException)
+              throw new UnprocessableEntityException(
+                'vpsProviderId inválido: VpsProvider não encontrado',
+              );
+            throw error;
+          }
+        }
         const product = await tx.product.update({
           where: { id },
           data: {
@@ -153,6 +173,7 @@ export class ProductsService {
             isActive: dto.isActive,
             batchWebhookEnabled: dto.batchWebhookEnabled,
             batchWebhookUrl: dto.batchWebhookUrl,
+            allocationRevision: { increment: 1 },
           },
         });
         if (product.vpsProviderId) {
@@ -273,7 +294,9 @@ export class ProductsService {
           ),
         };
 
-        const adapter = this.adapterResolver.resolve(product.adapterType);
+        const adapter = this.adapterResolver.resolve(
+          instance.vpsProvider.adapterType,
+        );
         await adapter.toggleWebhook(ctx, instance.instanceName, { enabled });
 
         synced++;
@@ -380,14 +403,37 @@ export class ProductsService {
           ),
         };
 
-        const adapter = this.adapterResolver.resolve(product.adapterType);
+        const adapter = this.adapterResolver.resolve(
+          instance.vpsProvider.adapterType,
+        );
 
+        const existing = await adapter.findWebhook(ctx, instance.instanceName);
+        // No remote configuration yet is valid; lookup failures still reach catch.
+        const raw = (existing ?? {}) as unknown as Record<string, unknown>;
+        const previous = (
+          raw.webhook && typeof raw.webhook === 'object' ? raw.webhook : raw
+        ) as Record<string, unknown>;
+        const options = {
+          url: targetUrl,
+          enabled: true,
+          events: targetEvents,
+          byEvents: (previous.byEvents ??
+            previous.webhookByEvents ??
+            false) as boolean,
+          base64: (previous.base64 ??
+            previous.webhookBase64 ??
+            true) as boolean,
+          headers: previous.headers as Record<string, string> | undefined,
+        };
         await adapter.setWebhook(ctx, instance.instanceName, {
-          webhook: {
-            url: targetUrl,
-            enabled: true,
-            events: targetEvents,
-          },
+          webhook: product.hubRelay
+            ? await relayWebhook(
+                this.prisma,
+                this.config,
+                instance.vpsProviderId,
+                options,
+              )
+            : options,
         });
 
         synced++;

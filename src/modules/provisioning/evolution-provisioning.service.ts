@@ -9,6 +9,8 @@ import { ConfigService } from '@nestjs/config';
 import { InstanceProvisioning, Prisma, VpsProvider } from '@prisma/client';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { CacheService } from '../../cache/cache.service';
+import { invalidateInstanceCache } from '../../cache/instance-cache';
+import { relayWebhook } from '../webhook/relay-configuration';
 import { decryptAES256GCM, hashSHA256 } from '../../common/crypto.util';
 import { QrRequestContext } from '../../common/qr-request-context';
 import { canonicalEvolutionEndpoint } from '../../prisma/evolution-identity';
@@ -260,6 +262,33 @@ export class EvolutionProvisioningService {
         }
         execution.assertActive();
         const observedProvider = provider;
+        if (product.hubRelay) {
+          const supplied = (
+            dto as CreateInstanceDto & {
+              webhook?: ProvisioningPayload['webhook'];
+            }
+          ).webhook;
+          const output = await this.prisma.webhookConfig.findFirst({
+            where: { productId, isActive: true },
+          });
+          payload.webhook = await relayWebhook(
+            this.prisma,
+            this.config,
+            providerId,
+            payload.webhook ??
+              supplied ?? {
+                enabled: true,
+                url: '',
+                events: output?.events ?? [],
+              },
+          );
+          payload.webhookApplied = false;
+          if (supplied)
+            payload.request = {
+              ...payload.request,
+              webhook: payload.webhook,
+            } as CreateInstanceDto;
+        }
         const result = await this.prisma.$transaction(async (tx) => {
           const current = await this.admission(tx, productId, providerId);
           // A preflight against an old destination/policy cannot authorize a POST
@@ -400,7 +429,7 @@ export class EvolutionProvisioningService {
   }
 
   async recordCreated(ticket: ProvisioningTicket, result: InstanceCreatedDto) {
-    return this.prisma.$transaction(async (tx) => {
+    const recorded = await this.prisma.$transaction(async (tx) => {
       await lockProduct(tx, ticket.productId);
       await lockProvider(tx, ticket.vpsProviderId);
       const row = await this.owned(tx, ticket);
@@ -433,6 +462,8 @@ export class EvolutionProvisioningService {
       await advanceOccupancy(tx, row.vpsProviderId);
       return instance;
     });
+    await invalidateInstanceCache(this.cache, recorded);
+    return recorded;
   }
 
   async markWebhookApplied(ticket: ProvisioningTicket) {
@@ -604,9 +635,7 @@ export class EvolutionProvisioningService {
       return instance;
     });
     if (removed) {
-      await this.cache.del(`instance:${removed.id}`);
-      if (removed.providerInstanceId)
-        await this.cache.del(`instance:${removed.providerInstanceId}`);
+      await invalidateInstanceCache(this.cache, removed);
     }
     return removed;
   }

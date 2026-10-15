@@ -121,7 +121,13 @@ describe('Instance number — Data/Admin query contracts', () => {
       Promise.resolve({ ...product, id: product.productId }),
     );
     prisma.vpsProvider.findUnique.mockResolvedValue(provider);
-    prisma.instance.findMany.mockResolvedValue([row]);
+    provider.adapterType = 'evolution';
+    prisma.instance.findMany.mockImplementation(
+      async (args: { include?: unknown }) =>
+        args.include
+          ? [(await prisma.instance.findFirst(args)) as unknown].filter(Boolean)
+          : [row],
+    );
     prisma.instance.findFirst.mockImplementation(() =>
       Promise.resolve({ ...row, product, vpsProvider: provider }),
     );
@@ -193,11 +199,11 @@ describe('Instance number — Data/Admin query contracts', () => {
         '/instance/fetchInstances',
         undefined,
         LISTS.includes(url) ? undefined : { instanceName: REMOTE.name },
-        ...(LISTS.includes(url) ? [undefined] : []),
+        ...(LISTS.includes(url)
+          ? [expect.objectContaining({ operation: 'lookup' }) as unknown]
+          : []),
       );
-      expect(prisma.instance.findMany).toHaveBeenCalledTimes(
-        LISTS.includes(url) ? 1 : 0,
-      );
+      expect(prisma.instance.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.instance.findFirst).toHaveBeenCalledTimes(
         LISTS.includes(url) ? 0 : 1,
       );
@@ -214,6 +220,7 @@ describe('Instance number — Data/Admin query contracts', () => {
 
   it.each(READS)('does not enrich another adapter: %s', async (url) => {
     product.adapterType = 'fixture-other';
+    provider.adapterType = 'fixture-other';
     const response = await get(url);
     const expected = { ...REMOTE, hubId: row.id };
     expect(response.statusCode).toBe(200);
@@ -317,13 +324,14 @@ describe('Instance number — Data/Admin query contracts', () => {
         error: 'NOT_FOUND',
         message: `Instância "${row.id}" não encontrada`,
       });
-      expect(prisma.instance.findFirst).toHaveBeenCalledWith({
+      expect(prisma.instance.findMany).toHaveBeenCalledWith({
         where: {
           productId: product.productId,
           isActive: true,
           OR: [{ id: row.id }, { providerInstanceId: row.id }],
         },
         include: { vpsProvider: true, product: true },
+        take: 2,
       });
       expect(http.request).not.toHaveBeenCalled();
     },

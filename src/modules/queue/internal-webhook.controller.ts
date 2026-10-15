@@ -1,40 +1,41 @@
 import {
   Body,
   Controller,
+  Headers,
   HttpCode,
   HttpStatus,
-  Inject,
   Param,
   Post,
-  UseGuards,
+  Req,
 } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
-import { Queue } from 'bullmq';
-import { IpWhitelistGuard } from '../../auth/ip-whitelist.guard';
-import { RELAY_QUEUE } from './queue.constants';
-import type { RelayJobPayload } from './relay.worker';
+import type { RelayRequestOrigin } from '../../common/relay-origin';
+import { RelayIngressService } from './relay-ingress.service';
 
 @ApiExcludeController()
-@UseGuards(IpWhitelistGuard)
 @Controller('internal/webhook')
 export class InternalWebhookController {
-  constructor(@Inject(RELAY_QUEUE) private readonly relayQueue: Queue) {}
+  constructor(private readonly ingress: RelayIngressService) {}
 
   @Post(':adapterType')
   @HttpCode(HttpStatus.OK)
-  receive(
+  async receive(
     @Param('adapterType') adapterType: string,
     @Body() body: Record<string, unknown>,
-  ): { received: true } {
-    const instanceName =
-      typeof body['instance'] === 'string' ? body['instance'] : '';
-    const payload: RelayJobPayload = { adapterType, instanceName, body };
+    @Req() request: RelayRequestOrigin,
+  ): Promise<{ received: true }> {
+    await this.ingress.receiveLegacy(adapterType, body, request);
+    return { received: true };
+  }
 
-    void this.relayQueue.add('relay', payload, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 1000 },
-    });
-
+  @Post(['evolution/:vpsProviderId', 'evolution/:vpsProviderId/:event'])
+  @HttpCode(HttpStatus.OK)
+  async receiveAuthenticated(
+    @Param('vpsProviderId') providerId: string,
+    @Headers('x-hub-relay-token') token: string | undefined,
+    @Body() body: Record<string, unknown>,
+  ): Promise<{ received: true }> {
+    await this.ingress.receiveAuthenticated(providerId, token, body);
     return { received: true };
   }
 }

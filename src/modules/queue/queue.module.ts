@@ -1,3 +1,4 @@
+import { RelayIngressService } from './relay-ingress.service';
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
@@ -7,7 +8,7 @@ import { ProviderModule } from '../../providers/provider.module';
 import { parseRedisConnection } from '../../common/redis.util';
 import { BatchProducer } from './batch.producer';
 import { RelayWorker } from './relay.worker';
-import { BATCH_QUEUE, RELAY_QUEUE } from './queue.constants';
+import { BATCH_QUEUE, RELAY_QUEUE, RELAY_QUEUE_NAME } from './queue.constants';
 
 export { BATCH_QUEUE, RELAY_QUEUE };
 
@@ -23,12 +24,15 @@ export { BATCH_QUEUE, RELAY_QUEUE };
     {
       provide: RELAY_QUEUE,
       useFactory: (config: ConfigService) =>
-        new Queue('relay', { connection: parseRedisConnection(config) }),
+        new Queue(RELAY_QUEUE_NAME, {
+          connection: parseRedisConnection(config),
+        }),
       inject: [ConfigService],
     },
     BatchProducer,
     RelayWorker,
+    RelayIngressService,
   ],
-  exports: [BatchProducer, RELAY_QUEUE],
+  exports: [BatchProducer, RELAY_QUEUE, RelayIngressService],
 })
 export class QueueModule {}
