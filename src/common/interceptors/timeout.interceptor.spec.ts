@@ -103,7 +103,8 @@ describe('TimeoutInterceptor — coordinated QR budget', () => {
       await jest.advanceTimersByTimeAsync(15000);
       expect(await result).toBeInstanceOf(HttpException);
       expect(((await result) as HttpException).getStatus()).toBe(408);
-      expect(request.qrExecution).toBeUndefined();
+      expect(request.qrExecution?.timeoutMs).toBe(15000);
+      expect(request.qrExecution?.signal.aborted).toBe(true);
       jest.clearAllTimers();
     },
   );

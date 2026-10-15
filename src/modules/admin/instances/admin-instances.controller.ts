@@ -67,7 +67,11 @@ export class AdminInstancesController {
     description:
       'Filtro opcional por pedaço do nome da instância (case-insensitive)',
   })
-  @ApiResponse({ status: 200, description: 'Lista de instâncias' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Lista de instâncias; number vazio é preenchido pelo ownerJid reconhecido da Evolution',
+  })
   @ApiResponse({
     status: 404,
     description: 'Produto não encontrado',
@@ -117,7 +121,11 @@ export class AdminInstancesController {
   @ApiOperation({ summary: 'Buscar dados de uma instância' })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
-  @ApiResponse({ status: 200, description: 'Dados da instância' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Dados da instância; number vazio é preenchido pelo ownerJid reconhecido da Evolution',
+  })
   @ApiResponse({
     status: 404,
     description: 'Produto ou instância não encontrado',

@@ -33,6 +33,34 @@ export const configSchema = z
     AUDIT_FLUSH_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
     AUDIT_FLUSH_BATCH_SIZE: z.coerce.number().int().positive().default(100),
     DEFAULT_ADAPTER_TYPE: z.string().default('evolution'),
+    EVOLUTION_ALLOCATION_ENABLED: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((v) => v === 'true'),
+    EVOLUTION_HEALTH_MAX_AGE_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2147483647)
+      .default(180000),
+    EVOLUTION_INVENTORY_MAX_AGE_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2147483647)
+      .default(300000),
+    EVOLUTION_RECOVERY_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(1000)
+      .max(2147483647)
+      .default(15000),
+    EVOLUTION_RECOVERY_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .gt(QR_FINISH_MARGIN_MS)
+      .max(2147483647)
+      .default(30000),
     ALLOW_BOOTSTRAP: z
       .string()
       .optional()

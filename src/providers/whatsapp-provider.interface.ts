@@ -4,6 +4,7 @@ export interface ProviderContext {
   providerUrl: string;
   providerApiKey: string;
   execution?: QrRequestContext;
+  strictInventory?: boolean;
 }
 
 // --- Instance DTOs ---

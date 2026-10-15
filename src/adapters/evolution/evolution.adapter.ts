@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   ApplyInstanceDefaultsResult,
   ChatDto,
@@ -88,6 +92,8 @@ export class EvolutionAdapter implements WhatsAppProvider {
         : undefined,
     );
 
+    if (ctx.strictInventory && !Array.isArray(raw))
+      throw new BadGatewayException('Resposta de inventário inválida');
     const list = Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
 
     return list.map((inst) => {

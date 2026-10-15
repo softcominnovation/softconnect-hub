@@ -65,7 +65,7 @@ export class InstanceController {
   @ApiResponse({
     status: 200,
     description:
-      'Objeto do provider com hubId injetado em cada instância do produto',
+      'Objeto do provider com hubId em cada instância; number vazio é preenchido pelo ownerJid reconhecido da Evolution',
   })
   list(
     @Product() product: AuthCachePayload,
@@ -80,7 +80,11 @@ export class InstanceController {
     name: 'instanceId',
     description: 'UUID da instância (hubId ou id do provider)',
   })
-  @ApiResponse({ status: 200, description: 'Dados da instância' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Dados da instância; number vazio é preenchido pelo ownerJid reconhecido da Evolution',
+  })
   @ApiResponse({ status: 404, description: 'Instância não encontrada' })
   fetchInstance(
     @Product() product: AuthCachePayload,

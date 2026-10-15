@@ -38,6 +38,7 @@ export class QrRequestContext {
   constructor(
     readonly timeoutMs: number,
     readonly providerTimeoutMs: number,
+    private readonly finishMarginMs = QR_FINISH_MARGIN_MS,
   ) {}
 
   get elapsedMs(): number {
@@ -63,7 +64,7 @@ export class QrRequestContext {
 
   callTimeout(limitMs: number): number {
     this.assertActive();
-    const remaining = Math.floor(this.remainingMs - QR_FINISH_MARGIN_MS);
+    const remaining = Math.floor(this.remainingMs - this.finishMarginMs);
     if (remaining <= 0) {
       this.abort('request_timeout');
       this.assertActive();

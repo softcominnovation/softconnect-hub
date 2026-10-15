@@ -1,6 +1,12 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma.service';
+import {
+  advanceOccupancy,
+  lockProduct,
+  lockProvider,
+  OPEN_PROVISIONING_STATES,
+} from '../modules/provisioning/evolution-locks';
 
 export async function ensureEvolutionLink(
   tx: Prisma.TransactionClient,
@@ -19,11 +25,20 @@ export async function createLinkedInstance(
   data: Prisma.InstanceUncheckedCreateInput,
 ) {
   return prisma.$transaction(async (tx) => {
-    const product = await tx.product.findUnique({
-      where: { id: data.productId },
-      select: { vpsProviderId: true, allocationMode: true },
+    const product = await lockProduct(tx, data.productId);
+    await lockProvider(tx, data.vpsProviderId);
+    const pending = await tx.instanceProvisioning.findFirst({
+      where: {
+        instanceName: data.instanceName,
+        state: { in: OPEN_PROVISIONING_STATES },
+        OR: [
+          { productId: data.productId },
+          { vpsProviderId: data.vpsProviderId },
+        ],
+      },
     });
-    if (!product) throw new NotFoundException('Produto não encontrado');
+    if (pending)
+      throw new ConflictException('Instância ainda em provisionamento');
     await ensureEvolutionLink(
       tx,
       data.productId,
@@ -31,6 +46,8 @@ export async function createLinkedInstance(
       product.allocationMode === 'legacy' &&
         product.vpsProviderId === data.vpsProviderId,
     );
-    return tx.instance.create({ data });
+    const instance = await tx.instance.create({ data });
+    await advanceOccupancy(tx, data.vpsProviderId);
+    return instance;
   });
 }

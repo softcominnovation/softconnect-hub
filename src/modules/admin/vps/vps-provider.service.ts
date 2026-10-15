@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, VpsProvider } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -11,6 +15,10 @@ import { LegacyProvider, legacyProvider } from '../../../prisma/legacy-selects';
 import { CacheService } from '../../../cache/cache.service';
 import { CreateVpsProviderDto } from './dto/create-vps-provider.dto';
 import { UpdateVpsProviderDto } from './dto/update-vps-provider.dto';
+import {
+  lockProvider,
+  OPEN_PROVISIONING_STATES,
+} from '../../provisioning/evolution-locks';
 
 type DecryptedProvider = LegacyProvider;
 
@@ -75,9 +83,38 @@ export class VpsProviderService {
       data.providerApiKey = encryptAES256GCM(dto.providerApiKey, key);
     }
 
-    const updated = await this.prisma.vpsProvider.update({
-      where: { id },
-      data,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const current = await lockProvider(tx, id);
+      const changesDestination =
+        (dto.providerUrl !== undefined &&
+          dto.providerUrl !== current.providerUrl) ||
+        (dto.adapterType !== undefined &&
+          dto.adapterType !== current.adapterType);
+      if (
+        changesDestination &&
+        (await tx.instanceProvisioning.findFirst({
+          where: {
+            vpsProviderId: id,
+            state: { in: OPEN_PROVISIONING_STATES },
+          },
+        }))
+      )
+        throw new ConflictException(
+          'Provider possui provisionamentos pendentes; destino preservado',
+        );
+      return tx.vpsProvider.update({
+        where: { id },
+        data: {
+          ...data,
+          configurationRevision: { increment: 1 },
+          ...(dto.providerUrl !== undefined || dto.providerApiKey
+            ? {
+                inventoryStatus: 'unknown',
+                inventoryObservedAt: null,
+              }
+            : {}),
+        },
+      });
     });
 
     if (dto.providerApiKey || dto.providerUrl) {

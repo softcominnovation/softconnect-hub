@@ -1,7 +1,6 @@
 import {
   BadGatewayException,
   BadRequestException,
-  ConflictException,
   HttpException,
   Injectable,
   Logger,
@@ -64,15 +63,12 @@ function isProviderNotFoundError(err: unknown): boolean {
   return false;
 }
 import { ConfigService } from '@nestjs/config';
-import type {
-  ProductDefaultProxy,
-  ProductDefaultWebhook,
-} from '@prisma/client';
+import type { ProductDefaultProxy } from '@prisma/client';
 import { AuthCachePayload } from '../../auth/apikey.guard';
 import { decryptAES256GCM } from '../../common/crypto.util';
 import { CacheService } from '../../cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { createLinkedInstance } from '../../prisma/evolution-links';
+import { EvolutionProvisioningService } from '../provisioning/evolution-provisioning.service';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
 import {
   ConnectInstanceDto,
@@ -83,6 +79,7 @@ import {
   ProviderContext,
 } from '../../providers/whatsapp-provider.interface';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
+import { withInstanceNumber } from './instance-number';
 import {
   QrRequestContext,
   QrTimeoutException,
@@ -99,6 +96,7 @@ export class InstanceService {
     private readonly adapterResolver: AdapterResolverService,
     private readonly instanceResolver: InstanceResolverService,
     private readonly config: ConfigService,
+    private readonly provisioning: EvolutionProvisioningService,
   ) {
     this.encryptionKeyHex = this.config.getOrThrow<string>('ENCRYPTION_KEY');
   }
@@ -108,185 +106,66 @@ export class InstanceService {
     dto: CreateInstanceDto,
     execution?: QrRequestContext,
   ): Promise<InstanceCreatedDto & { hubId: string } & Record<string, unknown>> {
-    const defaultProxyDeadlineAt =
-      performance.now() + this.config.get<number>('PROXY_TIMEOUT_MS', 15000);
-    execution?.assertActive();
-    if (execution) execution.productId = product.productId;
-    if (!product.vpsProviderId) {
-      throw new BadRequestException('Produto sem VpsProvider associado');
-    }
-
-    const provider = await this.prisma.vpsProvider.findUnique({
-      where: { id: product.vpsProviderId, isActive: true },
-    });
-
-    if (!provider)
-      throw new NotFoundException('VpsProvider nao encontrado ou inativo');
-
-    if (provider.adapterType !== product.adapterType) {
-      throw new BadRequestException(
-        `Incompatibilidade de adapter: produto usa "${product.adapterType}", VPS usa "${provider.adapterType}"`,
-      );
-    }
-
-    const ctx: ProviderContext = {
-      providerUrl: provider.providerUrl,
-      providerApiKey: decryptAES256GCM(
-        provider.providerApiKey,
-        this.encryptionKeyHex,
-      ),
-      ...(execution ? { execution } : {}),
-    };
-    if (execution) execution.providerId = provider.id;
-
-    const existingInstance = await this.prisma.instance.findFirst({
-      where: { productId: product.productId, instanceName: dto.instanceName },
-    });
-
-    if (existingInstance) {
-      const adapter = this.adapterResolver.resolve(product.adapterType);
-      let existsInProvider = false;
-
-      try {
-        execution?.assertActive();
-        const providerInstances = await adapter.fetchInstances(ctx);
-        existsInProvider = providerInstances.some(
-          (i) => i.instanceName === dto.instanceName,
-        );
-      } catch (error) {
-        this.checkQrInterruption(execution, error);
-        existsInProvider = false;
-      }
-
-      if (existsInProvider) {
-        throw new ConflictException(
-          `Instância "${dto.instanceName}" já existe neste produto e no provider (id: ${existingInstance.id})`,
-        );
-      }
-
-      execution?.assertActive();
-      this.logger.warn(
-        `[createInstance] registro órfão encontrado no Hub (id=${existingInstance.id}) sem correspondência no provider — removendo e recriando`,
-      );
-      await this.prisma.instance.delete({ where: { id: existingInstance.id } });
-    } else {
-      // Hub sem registro: ainda assim bloquear se o nome já existir no provider
-      // (evita falso "criar" após delete dessincronizado no passado).
-      const adapterForCheck = this.adapterResolver.resolve(product.adapterType);
-      try {
-        execution?.assertActive();
-        const providerInstances = await adapterForCheck.fetchInstances(ctx);
-        const existsInProvider = providerInstances.some(
-          (i) => i.instanceName === dto.instanceName,
-        );
-        if (existsInProvider) {
-          throw new ConflictException(
-            `Instância "${dto.instanceName}" já existe no provider, mas não está registrada no Hub. Remova-a no provider ou importe-a pelo Manager antes de criar.`,
-          );
-        }
-      } catch (err) {
-        this.checkQrInterruption(execution, err);
-        if (err instanceof ConflictException) throw err;
-        this.logger.warn(
-          `[createInstance] não foi possível verificar existência no provider antes de criar — prosseguindo. error=${execution ? 'provider_lookup_failed' : extractErrorDetail(err)}`,
-        );
-      }
-    }
-
-    const adapter = this.adapterResolver.resolve(product.adapterType);
-    execution?.assertActive();
-    let result: InstanceCreatedDto;
+    execution ??= new QrRequestContext(
+      this.config.get<number>('PROXY_TIMEOUT_MS', 15000),
+      this.config.get<number>('PROXY_TIMEOUT_MS', 15000),
+    );
+    execution.productId = product.productId;
+    const prepared = await this.provisioning.prepare(
+      product.productId,
+      dto,
+      execution,
+    );
+    const { ticket, payload } = prepared;
     try {
-      result = await adapter.createInstance(ctx, dto);
-    } catch (error) {
-      if (execution)
-        this.logger.warn(
-          `[qr:create] resultado remoto não confirmado. productId=${product.productId} providerId=${provider.id}`,
-        );
-      throw error;
-    }
-
-    const instance = await createLinkedInstance(this.prisma, {
-      productId: product.productId,
-      vpsProviderId: provider.id,
-      instanceName: dto.instanceName,
-      providerInstanceId: result.instanceId ?? null,
-      instanceToken: dto.token,
-      hubToken: `hub_${product.productId}_${dto.instanceName}`,
-      status: 'disconnected',
-    });
-    if (execution) execution.instanceId = instance.id;
-    if (execution?.signal.aborted)
-      this.logger.warn(
-        `[qr:create] vínculo preservado após interrupção. instanceId=${instance.id}`,
-      );
-    execution?.assertActive();
-
-    const response: InstanceCreatedDto & { hubId: string } & Record<
-        string,
-        unknown
-      > = {
-      ...result,
-      hubId: instance.id,
-    };
-
-    if (adapter.applyInstanceDefaults) {
-      let defaultWebhook: ProductDefaultWebhook | null = null;
+      const provider = await this.provisioning.markCreating(ticket, execution);
+      execution.providerId = provider.id;
+      const ctx = this.provisioning.context(provider, execution);
+      const adapter = this.adapterResolver.resolve(provider.adapterType);
+      execution.assertActive();
+      const result = await adapter.createInstance(ctx, payload.request);
+      // Persist even when the caller disconnected after the remote success.
+      const instance = await this.provisioning.recordCreated(ticket, result);
+      execution.instanceId = instance.id;
+      if (execution.signal.aborted && !payload.webhook)
+        await this.provisioning.finish(ticket);
+      execution.assertActive();
+      const response = {
+        ...result,
+        hubId: instance.id,
+      } as InstanceCreatedDto & { hubId: string } & Record<string, unknown>;
       let defaultProxy: ProductDefaultProxy | null = null;
-
       try {
-        [defaultWebhook, defaultProxy] = await Promise.all([
-          this.prisma.productDefaultWebhook.findUnique({
-            where: { productId: product.productId },
-          }),
-          this.prisma.productDefaultProxy.findUnique({
-            where: { productId: product.productId },
-          }),
-        ]);
-      } catch (err) {
+        defaultProxy = await this.prisma.productDefaultProxy.findUnique({
+          where: { productId: product.productId },
+        });
+      } catch {
         this.logger.warn(
-          `[createInstance] erro ao buscar defaults — prosseguindo sem aplicar: ${(err as Error).message}`,
+          'event=instance_default_proxy_unconfirmed reason=config_lookup_failed',
         );
       }
-
-      const hasDefaults = defaultWebhook || defaultProxy;
-
-      if (hasDefaults) {
+      if (payload.webhook && !adapter.applyInstanceDefaults)
+        throw new BadGatewayException(
+          'Adapter não suporta configuração obrigatória',
+        );
+      if (adapter.applyInstanceDefaults && payload.webhook) {
         try {
-          execution?.assertActive();
+          execution.assertActive();
           const applied = await adapter.applyInstanceDefaults(
             ctx,
             dto.instanceName,
             {
-              webhook: defaultWebhook
-                ? {
-                    enabled: defaultWebhook.enabled,
-                    url: defaultWebhook.url,
-                    headers: defaultWebhook.headers as
-                      | Record<string, string>
-                      | undefined,
-                    byEvents: defaultWebhook.byEvents,
-                    base64: defaultWebhook.base64,
-                    events: defaultWebhook.events,
-                  }
-                : undefined,
-              proxy: defaultProxy
-                ? {
-                    enabled: defaultProxy.enabled,
-                    host: defaultProxy.host,
-                    port: defaultProxy.port,
-                    protocol: defaultProxy.protocol,
-                    username: defaultProxy.username ?? undefined,
-                    password: defaultProxy.password ?? undefined,
-                  }
-                : undefined,
+              webhook: payload.webhook,
             },
-            { defaultProxyDeadlineAt },
+            {
+              defaultProxyDeadlineAt: performance.now() + execution.remainingMs,
+            },
           );
-
+          if (payload.webhook)
+            await this.provisioning.markWebhookApplied(ticket);
           if (applied.webhook !== undefined) response.webhook = applied.webhook;
           if (applied.proxy !== undefined) response.proxy = applied.proxy;
-          if (applied.proxyFailure) {
+          if (applied.proxyFailure)
             this.logger.warn(
               JSON.stringify({
                 event: 'instance_default_proxy_unconfirmed',
@@ -296,77 +175,87 @@ export class InstanceService {
                 reason: applied.proxyFailure,
               }),
             );
-          }
-        } catch (err) {
-          if (execution) {
-            this.logger.warn(
-              `[qr:defaults] configuração incompleta; vínculo preservado até confirmação de compensação. instanceId=${instance.id}`,
-            );
-            this.checkQrInterruption(execution, err);
-            try {
-              execution.assertActive();
-              await adapter.deleteInstance(ctx, dto.instanceName);
-              await this.prisma.instance.deleteMany({
-                where: { id: instance.id },
-              });
-            } catch (deleteErr) {
-              this.checkQrInterruption(execution, deleteErr);
-              throw new BadGatewayException(
-                'Falha ao reverter configurações padrão; registro mantido para verificação',
-              );
-            }
-            throw new BadRequestException(
-              'Falha ao aplicar configurações padrão — operação revertida.',
-            );
-          }
-          if (isProviderTimeoutError(err)) {
-            this.logger.warn(
-              `[createInstance] timeout nos defaults; vínculo preservado. instanceId=${instance.id}`,
-            );
-            throw err instanceof HttpException
-              ? err
+        } catch (error) {
+          this.checkQrInterruption(execution, error);
+          if (isProviderTimeoutError(error))
+            throw error instanceof HttpException
+              ? error
               : new RequestTimeoutException('Request timeout');
-          }
-          const errMsg = extractErrorDetail(err);
-          const errFull =
-            err instanceof HttpException
-              ? JSON.stringify(err.getResponse())
-              : errMsg;
-          this.logger.error(
-            `[createInstance] falha ao aplicar defaults — iniciando rollback. productId=${product.productId} instanceName=${dto.instanceName}: ${errFull}`,
-          );
-
+          // A functional failure of a required default requires compensation.
+          await this.provisioning.markCleanup(ticket);
           try {
+            execution.assertActive();
             await adapter.deleteInstance(ctx, dto.instanceName);
-          } catch (deleteErr) {
-            if (!isProviderNotFoundError(deleteErr)) {
-              this.logger.warn(
-                `[createInstance] rollback não confirmado; vínculo preservado. instanceId=${instance.id}`,
-              );
-              if (isProviderTimeoutError(deleteErr)) {
-                throw deleteErr instanceof HttpException
-                  ? deleteErr
-                  : new RequestTimeoutException('Request timeout');
-              }
+          } catch (deleteError) {
+            this.checkQrInterruption(execution, deleteError);
+            if (isProviderTimeoutError(deleteError))
+              throw deleteError instanceof HttpException
+                ? deleteError
+                : new RequestTimeoutException('Request timeout');
+            if (!isProviderNotFoundError(deleteError))
               throw new BadGatewayException(
                 'Falha ao reverter configurações padrão; registro mantido para verificação',
               );
-            }
           }
-
-          await this.prisma.instance.deleteMany({
-            where: { id: instance.id },
-          });
-
+          await this.provisioning.removeConfirmed(
+            instance.id,
+            product.productId,
+            provider.id,
+            ticket,
+          );
           throw new BadRequestException(
-            `Falha ao aplicar configurações padrão — operação revertida. Detalhe: ${errFull}`,
+            'Falha ao aplicar configurações padrão — operação revertida.',
           );
         }
       }
+      if (adapter.applyInstanceDefaults && defaultProxy) {
+        try {
+          const applied = await adapter.applyInstanceDefaults(
+            ctx,
+            dto.instanceName,
+            {
+              proxy: {
+                enabled: defaultProxy.enabled,
+                host: defaultProxy.host,
+                port: defaultProxy.port,
+                protocol: defaultProxy.protocol,
+                username: defaultProxy.username ?? undefined,
+                password: defaultProxy.password ?? undefined,
+              },
+            },
+            {
+              defaultProxyDeadlineAt: performance.now() + execution.remainingMs,
+            },
+          );
+          if (applied.proxy !== undefined) response.proxy = applied.proxy;
+          if (applied.proxyFailure)
+            this.logger.warn(
+              JSON.stringify({
+                event: 'instance_default_proxy_unconfirmed',
+                productId: product.productId,
+                providerId: provider.id,
+                instanceId: instance.id,
+                reason: applied.proxyFailure,
+              }),
+            );
+        } catch {
+          // Required work is complete; a cancelled optional proxy must not keep
+          // a creation uncertain or cause a background proxy attempt.
+          await this.provisioning.finish(ticket);
+          execution.assertActive();
+          this.logger.warn(
+            'event=instance_default_proxy_unconfirmed reason=transport_error',
+          );
+          return response;
+        }
+      }
+      await this.provisioning.finish(ticket);
+      execution.assertActive();
+      return response;
+    } finally {
+      // Terminal states are untouched; uncertain work stays on the same host.
+      await this.provisioning.abandon(ticket);
     }
-
-    execution?.assertActive();
-    return response;
   }
 
   private checkQrInterruption(
@@ -453,7 +342,7 @@ export class InstanceService {
       }
 
       list.push({
-        ...providerMatch,
+        ...withInstanceNumber(providerMatch, product.adapterType),
         hubId: hub.id,
       } as InstanceDto);
     }
@@ -480,7 +369,7 @@ export class InstanceService {
       : raw;
 
     return {
-      ...payload,
+      ...withInstanceNumber(payload, resolved.adapterType),
       hubId: resolved.instanceId,
     } as InstanceDto;
   }
@@ -575,6 +464,7 @@ export class InstanceService {
       throw new NotFoundException(`Instância "${instanceId}" não encontrada`);
     }
 
+    await this.provisioning.assertDeletable(instance.id);
     const ctx: ProviderContext = {
       providerUrl: instance.vpsProvider.providerUrl,
       providerApiKey: decryptAES256GCM(
@@ -604,17 +494,13 @@ export class InstanceService {
       }
     }
 
-    const deleted = await this.prisma.instance.deleteMany({
-      where: { id: instance.id, productId: product.productId },
-    });
-
-    this.logger.log(
-      `[delete] instanceId=${instance.id} productId=${product.productId} rowsDeleted=${deleted.count}`,
+    await this.provisioning.removeConfirmed(
+      instance.id,
+      product.productId,
+      instance.vpsProviderId,
     );
-
-    await this.cache.del(`instance:${instance.id}`);
-    if (instance.providerInstanceId) {
-      await this.cache.del(`instance:${instance.providerInstanceId}`);
-    }
+    this.logger.log(
+      `[delete] instanceId=${instance.id} productId=${product.productId} rowsDeleted=1`,
+    );
   }
 }

@@ -1,3 +1,6 @@
+import { EvolutionProvisioningService } from '../provisioning/evolution-provisioning.service';
+import { EvolutionInventoryService } from '../provisioning/evolution-inventory.service';
+import { provisionPersistence } from '../../../test/support/provisioning-prisma.fixture';
 import { ExecutionContext, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
@@ -27,9 +30,18 @@ import { MessageService } from '../message/message.service';
 import { InstanceController } from './instance.controller';
 import { InstanceService } from './instance.service';
 
-jest.mock('../../common/crypto.util', () => ({
-  decryptAES256GCM: () => 'fixture-key',
-}));
+jest.mock('../../common/crypto.util', () => {
+  const actual = jest.requireActual<typeof import('../../common/crypto.util')>(
+    '../../common/crypto.util',
+  );
+  return {
+    ...actual,
+    decryptAES256GCM: (value: string, key: string) =>
+      value.split(':').length === 3 && value.length > 100
+        ? actual.decryptAES256GCM(value, key)
+        : 'fixture-key',
+  };
+});
 
 // Only loopback HTTP is real. No AppModule, database, Redis, queue or external Evolution.
 describe('QR timeout — local HTTP integration', () => {
@@ -177,6 +189,8 @@ describe('QR timeout — local HTTP integration', () => {
       controllers: [InstanceController, AdminInstancesController],
       providers: [
         InstanceService,
+        EvolutionProvisioningService,
+        { provide: EvolutionInventoryService, useValue: {} },
         AdminInstancesService,
         EvolutionHttpService,
         EvolutionAdapter,
@@ -189,19 +203,22 @@ describe('QR timeout — local HTTP integration', () => {
         },
         {
           provide: PrismaService,
-          useValue: {
+          useValue: provisionPersistence({
             vpsProvider: {
               findUnique: jest.fn().mockResolvedValue({
                 id: product.vpsProviderId,
                 providerUrl,
                 providerApiKey: 'fixture-encrypted',
                 adapterType: 'evolution',
+                isActive: true,
+                maxInstances: null,
+                acceptingNewInstances: true,
               }),
             },
             ...prisma,
-          },
+          }),
         },
-        { provide: CacheService, useValue: {} },
+        { provide: CacheService, useValue: { del: jest.fn() } },
         { provide: MessageService, useValue: {} },
         {
           provide: InstanceResolverService,
@@ -671,7 +688,7 @@ describe('QR timeout — local HTTP integration', () => {
       '/webhook/set/fixture',
       '/instance/delete/fixture',
     ]);
-    expect(prisma.instance.deleteMany).toHaveBeenCalledTimes(1);
+    expect(prisma.instance.delete).toHaveBeenCalledTimes(1);
   });
 
   it('cancels the optional proxy when the real create caller disconnects, preserving the binding', async () => {

@@ -44,11 +44,12 @@ export class TimeoutInterceptor implements NestInterceptor {
     );
     const request = context.switchToHttp().getRequest<QrHttpRequest>();
     const body = request.body as { qrcode?: unknown } | undefined;
-    if (
-      profile === 'connect' ||
-      (profile === 'create' && body?.qrcode === true)
-    ) {
-      return this.interceptQr(context, next);
+    if (profile === 'connect' || profile === 'create') {
+      return this.interceptQr(
+        context,
+        next,
+        profile === 'connect' || body?.qrcode === true,
+      );
     }
     return next.handle().pipe(
       timeout(this.timeoutMs),
@@ -66,12 +67,18 @@ export class TimeoutInterceptor implements NestInterceptor {
   private interceptQr(
     context: ExecutionContext,
     next: CallHandler,
+    qr = true,
   ): Observable<unknown> {
     const request = context.switchToHttp().getRequest<QrHttpRequest>();
     const reply = context.switchToHttp().getResponse<FastifyReply>();
     const execution = new QrRequestContext(
-      this.config.get<number>('QR_REQUEST_TIMEOUT_MS', 60000),
-      this.config.get<number>('QR_PROVIDER_TIMEOUT_MS', 50000),
+      qr
+        ? this.config.get<number>('QR_REQUEST_TIMEOUT_MS', 60000)
+        : this.timeoutMs,
+      qr
+        ? this.config.get<number>('QR_PROVIDER_TIMEOUT_MS', 50000)
+        : this.timeoutMs,
+      qr ? undefined : Math.min(1000, Math.floor(this.timeoutMs / 10)),
     );
     request.qrExecution = execution;
 
@@ -127,10 +134,10 @@ export class TimeoutInterceptor implements NestInterceptor {
         inner?.unsubscribe();
         this.logger.log(
           JSON.stringify({
-            event: 'qr_request_finished',
+            event: qr ? 'qr_request_finished' : 'instance_request_finished',
             requestId: request.id,
             route: request.routeOptions?.url,
-            profile: 'qr',
+            profile: qr ? 'qr' : 'create',
             durationMs: Math.round(execution.elapsedMs),
             timeoutMs: execution.timeoutMs,
             providerTimeoutMs: execution.providerTimeoutMs,

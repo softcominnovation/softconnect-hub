@@ -1,3 +1,6 @@
+import { EvolutionProvisioningService } from '../provisioning/evolution-provisioning.service';
+import { EvolutionInventoryService } from '../provisioning/evolution-inventory.service';
+import { provisionPersistence } from '../../../test/support/provisioning-prisma.fixture';
 import {
   BadGatewayException,
   BadRequestException,
@@ -19,9 +22,18 @@ import {
   QrTimeoutException,
 } from '../../common/qr-request-context';
 
-jest.mock('../../common/crypto.util', () => ({
-  decryptAES256GCM: jest.fn().mockReturnValue('decrypted-api-key'),
-}));
+jest.mock('../../common/crypto.util', () => {
+  const actual = jest.requireActual<typeof import('../../common/crypto.util')>(
+    '../../common/crypto.util',
+  );
+  return {
+    ...actual,
+    decryptAES256GCM: (value: string, key: string) =>
+      value.split(':').length === 3 && value.length > 100
+        ? actual.decryptAES256GCM(value, key)
+        : 'fixture-key',
+  };
+});
 
 const PRODUCT = {
   productId: 'prod-1',
@@ -41,6 +53,8 @@ const PROVIDER_ROW = {
   providerApiKey: 'iv:tag:cipher',
   adapterType: 'evolution',
   isActive: true,
+  maxInstances: null,
+  acceptingNewInstances: true,
 };
 
 const INSTANCE_ROW = {
@@ -83,6 +97,8 @@ describe('InstanceService — delete/create sync', () => {
       $transaction: jest.fn((work: (tx: unknown) => unknown) => work(prisma)),
       product: {
         findUnique: jest.fn().mockResolvedValue({
+          ...PRODUCT,
+          id: PRODUCT.productId,
           vpsProviderId: PRODUCT.vpsProviderId,
           allocationMode: 'legacy',
         }),
@@ -98,6 +114,7 @@ describe('InstanceService — delete/create sync', () => {
       productDefaultWebhook: { findUnique: jest.fn() },
       productDefaultProxy: { findUnique: jest.fn() },
     };
+    provisionPersistence(prisma);
     cache = { del: jest.fn() };
     adapter = {
       fetchInstances: jest.fn(),
@@ -109,6 +126,8 @@ describe('InstanceService — delete/create sync', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InstanceService,
+        EvolutionProvisioningService,
+        { provide: EvolutionInventoryService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: CacheService, useValue: cache },
         { provide: AdapterResolverService, useValue: adapterResolver },
@@ -129,7 +148,7 @@ describe('InstanceService — delete/create sync', () => {
   describe('deleteInstance', () => {
     beforeEach(() => {
       prisma.instance.findFirst.mockResolvedValue(INSTANCE_ROW);
-      prisma.instance.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.instance.delete.mockResolvedValue({ count: 1 });
     });
 
     it('deleta no provider e só então remove do Hub', async () => {
@@ -141,8 +160,8 @@ describe('InstanceService — delete/create sync', () => {
         expect.objectContaining({ providerUrl: PROVIDER_ROW.providerUrl }),
         INSTANCE_ROW.instanceName,
       );
-      expect(prisma.instance.deleteMany).toHaveBeenCalledWith({
-        where: { id: INSTANCE_ROW.id, productId: PRODUCT.productId },
+      expect(prisma.instance.delete).toHaveBeenCalledWith({
+        where: { id: INSTANCE_ROW.id },
       });
       expect(cache.del).toHaveBeenCalledWith(`instance:${INSTANCE_ROW.id}`);
     });
@@ -156,7 +175,7 @@ describe('InstanceService — delete/create sync', () => {
         service.deleteInstance(PRODUCT, 'hub-inst-1'),
       ).rejects.toBeInstanceOf(BadGatewayException);
 
-      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.instance.delete).not.toHaveBeenCalled();
       expect(cache.del).not.toHaveBeenCalled();
     });
 
@@ -167,7 +186,7 @@ describe('InstanceService — delete/create sync', () => {
 
       await service.deleteInstance(PRODUCT, 'hub-inst-1');
 
-      expect(prisma.instance.deleteMany).toHaveBeenCalled();
+      expect(prisma.instance.delete).toHaveBeenCalled();
     });
 
     it('404 se a instância não existir no Hub', async () => {
@@ -312,7 +331,7 @@ describe('InstanceService — delete/create sync', () => {
       );
       expect(execution.instanceId).toBe('hub-qr');
       expect(adapter.applyInstanceDefaults).not.toHaveBeenCalled();
-      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.instance.delete).not.toHaveBeenCalled();
       expect(adapter.deleteInstance).not.toHaveBeenCalled();
     });
 
@@ -327,7 +346,7 @@ describe('InstanceService — delete/create sync', () => {
           service.createInstance(PRODUCT, dto, execution),
         ).rejects.toBeInstanceOf(QrTimeoutException);
         expect(prisma.instance.create).toHaveBeenCalledTimes(1);
-        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.instance.delete).not.toHaveBeenCalled();
         expect(adapter.deleteInstance).not.toHaveBeenCalled();
       },
     );
@@ -337,14 +356,14 @@ describe('InstanceService — delete/create sync', () => {
         new BadRequestException('fixture failure'),
       );
       adapter.deleteInstance.mockImplementation(() => {
-        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.instance.delete).not.toHaveBeenCalled();
         return Promise.resolve();
       });
       await expect(
         service.createInstance(PRODUCT, dto, execution),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
-      expect(prisma.instance.deleteMany).toHaveBeenCalledTimes(1);
+      expect(prisma.instance.delete).toHaveBeenCalledTimes(1);
     });
 
     it('keeps local evidence when compensation times out', async () => {
@@ -359,7 +378,7 @@ describe('InstanceService — delete/create sync', () => {
         service.createInstance(PRODUCT, dto, execution),
       ).rejects.toBeInstanceOf(QrTimeoutException);
       expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
-      expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.instance.delete).not.toHaveBeenCalled();
     });
 
     it('keeps the successful create body and uses one context for every step', async () => {
@@ -376,7 +395,7 @@ describe('InstanceService — delete/create sync', () => {
       );
       expect(adapter.createInstance).toHaveBeenCalledWith(
         expect.objectContaining({ execution }),
-        dto,
+        expect.objectContaining(dto),
       );
       expect(adapter.applyInstanceDefaults).toHaveBeenCalledWith(
         expect.objectContaining({ execution }),
@@ -423,7 +442,7 @@ describe('InstanceService — delete/create sync', () => {
           message: 'Request timeout',
         });
         expect(prisma.instance.create).toHaveBeenCalledTimes(1);
-        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.instance.delete).not.toHaveBeenCalled();
         expect(adapter.deleteInstance).not.toHaveBeenCalled();
       },
     );
@@ -437,7 +456,7 @@ describe('InstanceService — delete/create sync', () => {
         );
         adapter.applyInstanceDefaults!.mockRejectedValue(error);
         await expect(service.createInstance(PRODUCT, dto)).rejects.toBe(error);
-        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.instance.delete).not.toHaveBeenCalled();
         expect(adapter.deleteInstance).not.toHaveBeenCalled();
       },
     );
@@ -449,7 +468,7 @@ describe('InstanceService — delete/create sync', () => {
           new BadRequestException('invalid default fixture'),
         );
         adapter.deleteInstance.mockImplementation(() => {
-          expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+          expect(prisma.instance.delete).not.toHaveBeenCalled();
           return absent
             ? Promise.reject(new NotFoundException())
             : Promise.resolve();
@@ -458,7 +477,7 @@ describe('InstanceService — delete/create sync', () => {
           service.createInstance(PRODUCT, dto),
         ).rejects.toBeInstanceOf(BadRequestException);
         expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
-        expect(prisma.instance.deleteMany).toHaveBeenCalledWith({
+        expect(prisma.instance.delete).toHaveBeenCalledWith({
           where: { id: 'hub-created' },
         });
       },
@@ -479,7 +498,7 @@ describe('InstanceService — delete/create sync', () => {
           service.createInstance(PRODUCT, dto),
         ).rejects.toMatchObject({ status });
         expect(adapter.deleteInstance).toHaveBeenCalledTimes(1);
-        expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+        expect(prisma.instance.delete).not.toHaveBeenCalled();
       },
     );
   });
@@ -520,7 +539,7 @@ describe('InstanceService — delete/create sync', () => {
           expect(result).toEqual({ ...created, hubId: 'hub-created' });
           expect(result).not.toHaveProperty('proxyFailure');
           expect(adapter.deleteInstance).not.toHaveBeenCalled();
-          expect(prisma.instance.deleteMany).not.toHaveBeenCalled();
+          expect(prisma.instance.delete).not.toHaveBeenCalled();
           expect(warn).toHaveBeenCalledWith(
             JSON.stringify({
               event: 'instance_default_proxy_unconfirmed',
