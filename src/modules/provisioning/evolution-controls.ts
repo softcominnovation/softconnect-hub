@@ -4,6 +4,7 @@ import { Prisma, VpsProvider } from '@prisma/client';
 import { canonicalEvolutionEndpoint } from '../../prisma/evolution-identity';
 import { OPEN_PROVISIONING_STATES } from './evolution-locks';
 import { readEvolutionOccupancy } from './evolution-inventory.service';
+import { writerConfirmation } from './evolution-setup';
 
 // Catalog/activation writers take this lock before product/provider row locks.
 // It closes the race between checking aliases and enabling shared capacity.
@@ -131,7 +132,10 @@ export async function assertWritersCompatible(
   tx: Prisma.TransactionClient,
   confirmed?: boolean,
 ) {
-  if (!confirmed || !(await isEvolutionBaseConsolidated(tx)))
+  if (
+    (!confirmed && !(await writerConfirmation(tx))) ||
+    !(await isEvolutionBaseConsolidated(tx))
+  )
     throw new ConflictException(
       'Confirme a atualização de todos os escritores e a consolidação do banco',
     );

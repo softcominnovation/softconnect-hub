@@ -1,4 +1,10 @@
 import {
+  assertNoBlockers,
+  detachEmptyLink,
+  legacyBlockers,
+} from '../../provisioning/evolution-reversal';
+import { writerConfirmation } from '../../provisioning/evolution-setup';
+import {
   ConflictException,
   Injectable,
   NotFoundException,
@@ -402,18 +408,7 @@ export class EvolutionsService {
       await lockProvider(tx, providerId);
       const link = await this.link(tx, productId, providerId);
       assertRevision(link.configurationRevision, expectedRevision);
-      const pair = { productId, vpsProviderId: providerId };
-      if (
-        product.vpsProviderId === providerId ||
-        (await tx.instance.count({ where: pair })) ||
-        (await tx.instanceProvisioning.count({
-          where: { ...pair, state: { in: OPEN_PROVISIONING_STATES } },
-        }))
-      )
-        throw new ConflictException('Vínculo em uso; pause novas admissões');
-      await tx.productEvolution.delete({
-        where: { productId_vpsProviderId: pair },
-      });
+      await detachEmptyLink(tx, product, providerId);
       await tx.product.update({
         where: { id: productId },
         data: { allocationRevision: { increment: 1 } },
@@ -596,7 +591,7 @@ export class EvolutionsService {
       capacityFirstAllocationAt: product.capacityFirstAllocationAt,
       distributionEnabled,
       databaseConsolidated,
-      requiresWriterConfirmation: true,
+      requiresWriterConfirmation: !(await writerConfirmation(tx)),
       blockers,
       order,
       ready: blockers.length === 0,
@@ -630,19 +625,11 @@ export class EvolutionsService {
             blockers: readiness.blockers,
           });
       } else {
-        if (
-          product.capacityFirstAllocationAt ||
-          !product.vpsProviderId ||
-          (await tx.instanceProvisioning.count({
-            where: { productId, state: { in: OPEN_PROVISIONING_STATES } },
-          })) ||
-          (await tx.instance.count({
-            where: { productId, vpsProviderId: { not: product.vpsProviderId } },
-          }))
-        )
-          throw new ConflictException(
-            'Distribuição histórica ou pendente; preserve o modo e pause novas admissões',
-          );
+        if (!product.vpsProviderId)
+          throw new ConflictException('Escolha um destino padrão');
+        assertNoBlockers(
+          await legacyBlockers(tx, product, product.vpsProviderId),
+        );
       }
       return tx.product.update({
         where: { id: productId },

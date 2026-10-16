@@ -1,4 +1,6 @@
 import { relayWebhook } from '../../webhook/relay-configuration';
+import { QrRequestContext } from '../../../common/qr-request-context';
+import { isDeepStrictEqual } from 'node:util';
 import {
   BadRequestException,
   ConflictException,
@@ -330,6 +332,7 @@ export class ProductsService {
   async syncRelay(
     productId: string,
     instanceId?: string,
+    execution?: QrRequestContext,
   ): Promise<SyncRelayResultDto> {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
@@ -395,7 +398,9 @@ export class ProductsService {
 
     for (const instance of instances) {
       try {
+        execution?.assertActive();
         const ctx: ProviderContext = {
+          ...(execution ? { execution } : {}),
           providerUrl: instance.vpsProvider.providerUrl,
           providerApiKey: decryptAES256GCM(
             instance.vpsProvider.providerApiKey,
@@ -425,19 +430,29 @@ export class ProductsService {
             true) as boolean,
           headers: previous.headers as Record<string, string> | undefined,
         };
-        await adapter.setWebhook(ctx, instance.instanceName, {
-          webhook: product.hubRelay
-            ? await relayWebhook(
-                this.prisma,
-                this.config,
-                instance.vpsProviderId,
-                options,
-              )
-            : options,
-        });
+        const webhook = product.hubRelay
+          ? await relayWebhook(
+              this.prisma,
+              this.config,
+              instance.vpsProviderId,
+              options,
+            )
+          : options;
+        // Durable preparation always reads before retrying a possibly effective
+        // write. The legacy sync contract retains its original write behavior.
+        const matches = Object.entries(webhook).every(([name, value]) =>
+          isDeepStrictEqual(previous[name], value),
+        );
+        execution?.assertActive();
+        if (!execution || !matches)
+          await adapter.setWebhook(ctx, instance.instanceName, { webhook });
 
         synced++;
       } catch (err) {
+        if (execution) {
+          failed++;
+          continue;
+        }
         let errorDetail: string;
         if (err instanceof HttpException) {
           errorDetail = JSON.stringify(err.getResponse());

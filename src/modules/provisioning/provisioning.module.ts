@@ -13,6 +13,10 @@ import { EvolutionRecoveryService } from './evolution-recovery.service';
     EvolutionProvisioningService,
     EvolutionRecoveryService,
   ],
-  exports: [EvolutionInventoryService, EvolutionProvisioningService],
+  exports: [
+    EvolutionInventoryService,
+    EvolutionProvisioningService,
+    EvolutionRecoveryService,
+  ],
 })
 export class ProvisioningModule {}

@@ -29,6 +29,29 @@ export class EvolutionRecoveryService
   private running = false;
   private stopped = false;
   private execution?: QrRequestContext;
+  private administrativePreparation?: () => Promise<void>;
+  private administrativeRunning = false;
+
+  registerAdministrativePreparation(run: () => Promise<void>) {
+    this.administrativePreparation = run;
+  }
+
+  async scanAdministrativePreparation() {
+    if (
+      this.stopped ||
+      this.administrativeRunning ||
+      !this.administrativePreparation
+    )
+      return;
+    this.administrativeRunning = true;
+    try {
+      await this.administrativePreparation();
+    } catch {
+      this.logger.warn('event=evolution_preparation_scan_failed');
+    } finally {
+      this.administrativeRunning = false;
+    }
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -43,6 +66,9 @@ export class EvolutionRecoveryService
     this.timer = setInterval(
       () => {
         void this.scan();
+        // Independent bounded lane: neither a slow creation recovery nor an
+        // administrative preparation can starve the other on this replica.
+        void this.scanAdministrativePreparation();
       },
       this.config.get<number>('EVOLUTION_RECOVERY_INTERVAL_MS', 15000),
     );

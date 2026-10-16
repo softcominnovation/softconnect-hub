@@ -122,7 +122,7 @@ export class UpdateEvolutionDto {
   confirmIdentity?: true;
   @ApiPropertyOptional({
     description:
-      'Todos os escritores atualizados; obrigatório ao definir teto positivo',
+      'Todos os escritores atualizados; pode ser omitido com confirmação de ambiente vigente',
   })
   writersCompatible?: true;
 }
@@ -138,7 +138,9 @@ export class UpdateEvolutionLinkDto extends RevisionDto {
 }
 export class AllocationDto extends RevisionDto {
   @ApiProperty({ enum: ['legacy', 'capacity'] }) mode!: 'legacy' | 'capacity';
-  @ApiPropertyOptional({ description: 'Obrigatório para ativar capacity' })
+  @ApiPropertyOptional({
+    description: 'Para ativar capacity sem confirmação de ambiente vigente',
+  })
   writersCompatible?: true;
 }
 

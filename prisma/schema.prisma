@@ -36,6 +36,54 @@ model Product {
   evolutions       ProductEvolution[]     @relation("ProductEvolutions")
   defaultEvolution ProductEvolution?      @relation("DefaultEvolution", fields: [id, vpsProviderId], references: [productId, vpsProviderId], onDelete: NoAction, onUpdate: NoAction)
   provisionings    InstanceProvisioning[]
+  evolutionChanges EvolutionChange[]
+}
+
+model EvolutionSetupConfirmation {
+  requirementsVersion String   @id
+  databaseIdentity    String
+  revision            Int      @default(1)
+  actor               String
+  confirmedAt         DateTime @default(now())
+}
+
+// Machine JWTs have no AdminUser foreign key. Keep their administrative audit
+// without fabricating a user or changing the existing Manager activity contract.
+model EvolutionAdminEvent {
+  id        String   @id @default(uuid())
+  actor     String
+  action    String
+  detail    Json
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+}
+
+model EvolutionChange {
+  id                String   @id @default(uuid())
+  productId         String
+  requestId         String
+  requestHash       String
+  action            String
+  actor             String
+  draft             Json
+  snapshot          Json
+  diagnostics       Json?
+  result            Json?
+  callback          Json?
+  status            String   @default("queued")
+  stage             String   @default("queued")
+  revision          Int      @default(0)
+  leaseOwner        String?
+  leaseExpiresAt    DateTime?
+  executionDeadline DateTime
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([productId, requestId])
+  @@index([status, leaseExpiresAt, createdAt])
+  @@index([productId, createdAt])
 }
 
 model ProductDefaultWebhook {

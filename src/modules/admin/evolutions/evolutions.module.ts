@@ -7,6 +7,10 @@ import { VpsModule } from '../vps/vps.module';
 import { EvolutionsController } from './evolutions.controller';
 import { ProductEvolutionsController } from './product-evolutions.controller';
 import { EvolutionsService } from './evolutions.service';
+import { ProductsModule } from '../products/products.module';
+import { EvolutionChangesController } from './evolution-changes.controller';
+import { EvolutionChangesService } from './evolution-changes.service';
+import { EvolutionSetupService } from './evolution-setup.service';
 
 @Module({
   imports: [
@@ -15,8 +19,17 @@ import { EvolutionsService } from './evolutions.service';
     PrismaModule,
     ProvisioningModule,
     VpsModule,
+    ProductsModule,
   ],
-  controllers: [EvolutionsController, ProductEvolutionsController],
-  providers: [EvolutionsService],
+  controllers: [
+    EvolutionsController,
+    ProductEvolutionsController,
+    EvolutionChangesController,
+  ],
+  providers: [
+    EvolutionsService,
+    EvolutionChangesService,
+    EvolutionSetupService,
+  ],
 })
 export class EvolutionsModule {}

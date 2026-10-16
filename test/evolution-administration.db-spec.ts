@@ -956,7 +956,7 @@ describe('Phase04 — administrative API on isolated PostgreSQL', () => {
     expect(reverted.mode).toBe('legacy');
   });
 
-  it('will not revert after first capacity allocation and preserves provider bindings', async () => {
+  it('AR01 allows safe legacy return after capacity history without deleting that history', async () => {
     await ready();
     config.set('EVOLUTION_ALLOCATION_ENABLED', true);
     const enabled = await first.admin.setAllocation(a.id, {
@@ -968,13 +968,13 @@ describe('Phase04 — administrative API on isolated PostgreSQL', () => {
       where: { id: a.id },
       data: { capacityFirstAllocationAt: new Date() },
     });
-    await expect(
-      first.admin.setAllocation(a.id, {
-        mode: 'legacy',
-        expectedRevision: enabled.configurationRevision,
-      }),
-    ).rejects.toBeInstanceOf(ConflictException);
-    expect((await first.admin.allocation(a.id)).mode).toBe('capacity');
+    const reverted = await first.admin.setAllocation(a.id, {
+      mode: 'legacy',
+      expectedRevision: enabled.configurationRevision,
+    });
+    expect(reverted.mode).toBe('legacy');
+    expect(reverted.capacityFirstAllocationAt).not.toBeNull();
+    expect(reverted.defaultProviderId).toBe(host.id);
   });
 
   it('global pause blocks both products but link pause affects only its own product', async () => {
