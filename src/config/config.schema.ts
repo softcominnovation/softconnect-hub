@@ -1,6 +1,10 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
 import { QR_FINISH_MARGIN_MS } from '../common/qr-request-context';
+import {
+  MEDIA_FINISH_MARGIN_MS,
+  MEDIA_TIMEOUT_DEFAULTS,
+} from '../common/media-request-context';
 
 export const configSchema = z
   .object({
@@ -21,6 +25,24 @@ export const configSchema = z
     ADMIN_JWT_EXPIRY: z.coerce.number().int().positive().default(86400),
     DEFAULT_RATE_LIMIT: z.coerce.number().int().positive().default(100),
     PROXY_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    MEDIA_REQUEST_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2147483647)
+      .default(MEDIA_TIMEOUT_DEFAULTS.request),
+    MEDIA_PROVIDER_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2147483647)
+      .default(MEDIA_TIMEOUT_DEFAULTS.provider),
+    MEDIA_DOWNLOAD_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2147483647)
+      .default(MEDIA_TIMEOUT_DEFAULTS.download),
     QR_REQUEST_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -99,6 +121,18 @@ export const configSchema = z
       path: ['QR_PROVIDER_TIMEOUT_MS'],
       message:
         'QR_PROVIDER_TIMEOUT_MS deve reservar 1000 ms dentro de QR_REQUEST_TIMEOUT_MS',
+    },
+  )
+  .refine(
+    (config) =>
+      config.MEDIA_REQUEST_TIMEOUT_MS >=
+      config.MEDIA_DOWNLOAD_TIMEOUT_MS +
+        config.MEDIA_PROVIDER_TIMEOUT_MS +
+        MEDIA_FINISH_MARGIN_MS,
+    {
+      path: ['MEDIA_REQUEST_TIMEOUT_MS'],
+      message:
+        'MEDIA_REQUEST_TIMEOUT_MS deve comportar download + provider + 30000 ms de margem',
     },
   );
 

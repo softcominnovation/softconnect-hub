@@ -17,6 +17,10 @@ import {
   QrOperation,
 } from '../../common/qr-request-context';
 import type { OptionalCallFailure } from '../../providers/whatsapp-provider.interface';
+import {
+  MediaRequestContext,
+  MediaTimeoutException,
+} from '../../common/media-request-context';
 
 export interface QrHttpOptions {
   execution: QrRequestContext;
@@ -289,6 +293,69 @@ export class EvolutionHttpService {
 
     this.recordFailure(vpsUrl);
     throw lastError ?? new Error('Unknown error');
+  }
+
+  async requestMedia<T>(
+    vpsUrl: string,
+    apiKey: string,
+    path: string,
+    data: unknown,
+    execution: MediaRequestContext,
+  ): Promise<T> {
+    execution.assertActive();
+    try {
+      this.checkCircuit(vpsUrl);
+    } catch (error) {
+      execution.failureSource = 'circuit_open';
+      throw error;
+    }
+    const timeoutMs = execution.startProviderCall();
+    const deadlineAt = performance.now() + timeoutMs;
+    const reason =
+      timeoutMs < execution.providerTimeoutMs
+        ? 'request_timeout'
+        : 'provider_timeout';
+    const timer = setTimeout(() => execution.abort(reason), timeoutMs);
+    try {
+      const response = await this.client.request<T>({
+        method: 'post',
+        url: `${vpsUrl}${path}`,
+        headers: { apikey: apiKey },
+        data,
+        timeout: timeoutMs,
+        signal: execution.signal,
+      });
+      if (performance.now() >= deadlineAt) execution.abort(reason);
+      execution.assertActive();
+      execution.upstreamStatusCode = response.status;
+      this.recordSuccess(vpsUrl);
+      return response.data;
+    } catch (error) {
+      if (
+        performance.now() >= deadlineAt ||
+        (axios.isAxiosError(error) &&
+          !error.response &&
+          (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'))
+      )
+        execution.abort(reason);
+      if (execution.reason) {
+        if (execution.reason === 'provider_timeout') this.recordFailure(vpsUrl);
+        throw new MediaTimeoutException(execution.reason);
+      }
+      if (axios.isAxiosError(error) && error.response) {
+        execution.failureSource = 'upstream_http';
+        execution.upstreamStatusCode = error.response.status;
+        throw new HttpException(
+          withoutRelayToken(error.response.data) as Record<string, unknown>,
+          error.response.status,
+        );
+      }
+      execution.failureSource = 'transport_error';
+      this.recordFailure(vpsUrl);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async requestQr<T>(

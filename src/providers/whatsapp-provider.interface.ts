@@ -1,9 +1,11 @@
 import type { QrRequestContext } from '../common/qr-request-context';
+import type { MediaRequestContext } from '../common/media-request-context';
 
 export interface ProviderContext {
   providerUrl: string;
   providerApiKey: string;
   execution?: QrRequestContext;
+  mediaExecution?: MediaRequestContext;
   strictInventory?: boolean;
 }
 

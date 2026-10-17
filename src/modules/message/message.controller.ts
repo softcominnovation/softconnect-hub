@@ -33,6 +33,11 @@ import {
   SendTextDto,
 } from './dto/message.dto';
 import { MessageService } from './message.service';
+import {
+  MediaExecution,
+  MediaTimeout,
+} from '../../common/decorators/media-timeout.decorator';
+import type { MediaRequestContext } from '../../common/media-request-context';
 
 @ApiTags('Data Plane — Messages')
 @ApiSecurity('apikey')
@@ -55,6 +60,7 @@ export class MessageController {
   }
 
   @Post('sendMedia/:instanceId')
+  @MediaTimeout()
   @ApiOperation({ summary: 'Enviar imagem, vídeo ou áudio' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendMediaDto })
@@ -63,11 +69,13 @@ export class MessageController {
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendMediaDto,
+    @MediaExecution() execution?: MediaRequestContext,
   ) {
-    return this.service.sendMedia(product, instanceId, dto);
+    return this.service.sendMedia(product, instanceId, dto, execution);
   }
 
   @Post('sendDocument/:instanceId')
+  @MediaTimeout()
   @ApiOperation({ summary: 'Enviar documento (PDF, DOCX, etc.)' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendDocumentDto })
@@ -76,11 +84,13 @@ export class MessageController {
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendDocumentDto,
+    @MediaExecution() execution?: MediaRequestContext,
   ) {
-    return this.service.sendDocument(product, instanceId, dto);
+    return this.service.sendDocument(product, instanceId, dto, execution);
   }
 
   @Post('sendSticker/:instanceId')
+  @MediaTimeout()
   @ApiOperation({ summary: 'Enviar sticker' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendStickerDto })
@@ -89,8 +99,9 @@ export class MessageController {
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendStickerDto,
+    @MediaExecution() execution?: MediaRequestContext,
   ) {
-    return this.service.sendSticker(product, instanceId, dto);
+    return this.service.sendSticker(product, instanceId, dto, execution);
   }
 
   @Post('sendList/:instanceId')
@@ -108,7 +119,9 @@ export class MessageController {
 
   @Post('sendPresence/:instanceId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Atualizar presença da instância (digitando, gravando…)' })
+  @ApiOperation({
+    summary: 'Atualizar presença da instância (digitando, gravando…)',
+  })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendPresenceDto })
   @ApiResponse({ status: 204, description: 'Presença atualizada' })
@@ -132,7 +145,10 @@ export class MessageBatchController {
   @ApiOperation({ summary: 'Enviar textos em lote (assíncrono via BullMQ)' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendBatchDto })
-  @ApiResponse({ status: 201, description: 'Lote enfileirado — retorna batchJobId' })
+  @ApiResponse({
+    status: 201,
+    description: 'Lote enfileirado — retorna batchJobId',
+  })
   sendBatchText(
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
@@ -145,7 +161,10 @@ export class MessageBatchController {
   @ApiOperation({ summary: 'Enviar mídias em lote (assíncrono via BullMQ)' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendBatchMediaDto })
-  @ApiResponse({ status: 201, description: 'Lote enfileirado — retorna batchJobId' })
+  @ApiResponse({
+    status: 201,
+    description: 'Lote enfileirado — retorna batchJobId',
+  })
   sendBatchMedia(
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
@@ -155,10 +174,15 @@ export class MessageBatchController {
   }
 
   @Post('send-document/:instanceId')
-  @ApiOperation({ summary: 'Enviar documentos em lote (assíncrono via BullMQ)' })
+  @ApiOperation({
+    summary: 'Enviar documentos em lote (assíncrono via BullMQ)',
+  })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendBatchDocumentDto })
-  @ApiResponse({ status: 201, description: 'Lote enfileirado — retorna batchJobId' })
+  @ApiResponse({
+    status: 201,
+    description: 'Lote enfileirado — retorna batchJobId',
+  })
   sendBatchDocument(
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
@@ -169,7 +193,10 @@ export class MessageBatchController {
 
   @Get(':jobId/status')
   @ApiOperation({ summary: 'Consultar status de um lote' })
-  @ApiParam({ name: 'jobId', description: 'ID do lote retornado pelo endpoint de batch' })
+  @ApiParam({
+    name: 'jobId',
+    description: 'ID do lote retornado pelo endpoint de batch',
+  })
   @ApiResponse({ status: 200, description: 'Status do lote' })
   @ApiResponse({ status: 404, description: 'Lote não encontrado' })
   getBatchStatus(

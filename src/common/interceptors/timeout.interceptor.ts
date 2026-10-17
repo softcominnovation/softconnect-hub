@@ -24,6 +24,15 @@ import {
   QrTimeoutProfile,
 } from '../decorators/qr-timeout.decorator';
 import { QrRequestContext, QrTimeoutException } from '../qr-request-context';
+import {
+  MEDIA_TIMEOUT_PROFILE,
+  MediaHttpRequest,
+} from '../decorators/media-timeout.decorator';
+import {
+  MEDIA_TIMEOUT_DEFAULTS,
+  MediaRequestContext,
+  MediaTimeoutException,
+} from '../media-request-context';
 
 @Injectable()
 export class TimeoutInterceptor implements NestInterceptor {
@@ -38,6 +47,10 @@ export class TimeoutInterceptor implements NestInterceptor {
   }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    if (
+      this.reflector.get<boolean>(MEDIA_TIMEOUT_PROFILE, context.getHandler())
+    )
+      return this.interceptMedia(context, next);
     const profile = this.reflector.get<QrTimeoutProfile | undefined>(
       QR_TIMEOUT_PROFILE,
       context.getHandler(),
@@ -62,6 +75,121 @@ export class TimeoutInterceptor implements NestInterceptor {
         return throwError(() => err);
       }),
     );
+  }
+
+  private interceptMedia(
+    context: ExecutionContext,
+    next: CallHandler,
+  ): Observable<unknown> {
+    const request = context.switchToHttp().getRequest<MediaHttpRequest>();
+    const reply = context.switchToHttp().getResponse<FastifyReply>();
+    const execution = new MediaRequestContext(
+      this.config.get<number>(
+        'MEDIA_REQUEST_TIMEOUT_MS',
+        MEDIA_TIMEOUT_DEFAULTS.request,
+      ),
+      this.config.get<number>(
+        'MEDIA_PROVIDER_TIMEOUT_MS',
+        MEDIA_TIMEOUT_DEFAULTS.provider,
+      ),
+      this.config.get<number>(
+        'MEDIA_DOWNLOAD_TIMEOUT_MS',
+        MEDIA_TIMEOUT_DEFAULTS.download,
+      ),
+    );
+    request.mediaExecution = execution;
+
+    return new Observable((subscriber) => {
+      let inner: Subscription | undefined;
+      let settled = false;
+      const removeListeners = () => {
+        request.raw.removeListener('aborted', abandon);
+        reply.raw.removeListener('close', onClose);
+      };
+      const finish = (statusCode: number, source: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        removeListeners();
+        this.logger.log(
+          JSON.stringify({
+            event: 'media_request_finished',
+            requestId: request.id,
+            route: request.routeOptions?.url,
+            durationMs: Math.round(execution.elapsedMs),
+            timeoutMs: execution.timeoutMs,
+            providerTimeoutMs: execution.providerTimeoutMs,
+            callTimeoutMs: execution.callTimeoutMs,
+            calls: execution.calls,
+            statusCode: execution.clientDisconnected ? 499 : statusCode,
+            upstreamStatusCode: execution.upstreamStatusCode,
+            clientDisconnected: execution.clientDisconnected,
+            source: execution.reason ?? source,
+          }),
+        );
+      };
+      const fail = (error: unknown) => {
+        if (settled) return;
+        finish(
+          error instanceof HttpException ? error.getStatus() : 500,
+          execution.failureSource ?? 'error',
+        );
+        subscriber.error(error);
+      };
+      const abandon = () => {
+        if (settled) return;
+        execution.disconnect();
+        const error = new MediaTimeoutException('client_disconnected');
+        if (!execution.providerStarted) fail(error);
+        else subscriber.error(error);
+      };
+      const onClose = () => {
+        if (!reply.raw.writableFinished) abandon();
+      };
+      const timer = setTimeout(() => {
+        execution.abort('request_timeout');
+        fail(new MediaTimeoutException('request_timeout'));
+        inner?.unsubscribe();
+      }, execution.remainingMs);
+
+      request.raw.once('aborted', abandon);
+      reply.raw.once('close', onClose);
+      if (request.raw.aborted || reply.raw.destroyed) {
+        abandon();
+      } else {
+        inner = defer(() => next.handle()).subscribe({
+          next: (value: unknown) => {
+            if (settled) return;
+            try {
+              execution.assertActive();
+              finish(reply.statusCode, 'upstream_success');
+              subscriber.next(value);
+              subscriber.complete();
+            } catch (error) {
+              fail(error);
+            }
+          },
+          error: fail,
+          complete: () => {
+            if (!settled) finish(reply.statusCode, 'completed');
+            subscriber.complete();
+          },
+        });
+      }
+
+      return () => {
+        removeListeners();
+        if (settled) inner?.unsubscribe();
+        else {
+          execution.disconnect();
+          if (!execution.providerStarted) {
+            finish(499, 'client_disconnected');
+            inner?.unsubscribe();
+          }
+          // After dispatch, observe the provider until its original deadline.
+        }
+      };
+    });
   }
 
   private interceptQr(

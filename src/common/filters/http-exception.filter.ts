@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { QrTimeoutException } from '../qr-request-context';
+import { MediaTimeoutException } from '../media-request-context';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -15,7 +16,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     if (
-      exception instanceof QrTimeoutException &&
+      (exception instanceof QrTimeoutException ||
+        exception instanceof MediaTimeoutException) &&
       exception.reason === 'client_disconnected'
     )
       return;

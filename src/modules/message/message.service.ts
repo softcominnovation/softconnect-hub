@@ -14,6 +14,7 @@ import type {
 } from '../../providers/whatsapp-provider.interface';
 import { BatchProducer } from '../queue/batch.producer';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
+import type { MediaRequestContext } from '../../common/media-request-context';
 import type {
   SendBatchDocumentDto,
   SendBatchDto,
@@ -78,12 +79,15 @@ export class MessageService {
     product: AuthCachePayload,
     instanceId: string,
     dto: SendMediaDto,
+    execution?: MediaRequestContext,
   ): Promise<MessageResponseDto> {
     const { ctx, adapterType, instanceName } = await this.ctx(
       product,
       instanceId,
     );
     const adapter = this.adapterResolver.resolve(adapterType);
+    execution?.assertActive();
+    if (execution) ctx.mediaExecution = execution;
     return adapter.sendMedia(ctx, instanceName, dto);
   }
 
@@ -104,12 +108,15 @@ export class MessageService {
     product: AuthCachePayload,
     instanceId: string,
     dto: SendDocumentDto,
+    execution?: MediaRequestContext,
   ): Promise<MessageResponseDto> {
     const { ctx, adapterType, instanceName } = await this.ctx(
       product,
       instanceId,
     );
     const adapter = this.adapterResolver.resolve(adapterType);
+    execution?.assertActive();
+    if (execution) ctx.mediaExecution = execution;
     return adapter.sendDocument(ctx, instanceName, dto);
   }
 
@@ -117,12 +124,15 @@ export class MessageService {
     product: AuthCachePayload,
     instanceId: string,
     dto: SendStickerDto,
+    execution?: MediaRequestContext,
   ): Promise<MessageResponseDto> {
     const { ctx, adapterType, instanceName } = await this.ctx(
       product,
       instanceId,
     );
     const adapter = this.adapterResolver.resolve(adapterType);
+    execution?.assertActive();
+    if (execution) ctx.mediaExecution = execution;
     return adapter.sendSticker(ctx, instanceName, dto);
   }
 

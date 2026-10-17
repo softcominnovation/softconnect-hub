@@ -281,6 +281,14 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendMediaDto,
   ): Promise<MessageResponseDto> {
+    if (ctx.mediaExecution)
+      return this.http.requestMedia(
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        `/message/sendMedia/${instanceName}`,
+        dto,
+        ctx.mediaExecution,
+      );
     return this.http.request(
       'post',
       ctx.providerUrl,
@@ -295,6 +303,14 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendDocumentDto,
   ): Promise<MessageResponseDto> {
+    if (ctx.mediaExecution)
+      return this.http.requestMedia(
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        `/message/sendMedia/${instanceName}`,
+        { ...dto, mediatype: 'document' },
+        ctx.mediaExecution,
+      );
     return this.http.request(
       'post',
       ctx.providerUrl,
@@ -309,6 +325,14 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendStickerDto,
   ): Promise<MessageResponseDto> {
+    if (ctx.mediaExecution)
+      return this.http.requestMedia(
+        ctx.providerUrl,
+        ctx.providerApiKey,
+        `/message/sendSticker/${instanceName}`,
+        dto,
+        ctx.mediaExecution,
+      );
     return this.http.request(
       'post',
       ctx.providerUrl,
