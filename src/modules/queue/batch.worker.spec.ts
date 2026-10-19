@@ -1,3 +1,17 @@
+import { createServer, Server } from 'node:http';
+import { AddressInfo } from 'node:net';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { EvolutionAdapter } from '../../adapters/evolution/evolution.adapter';
+import { EvolutionHttpService } from '../../adapters/evolution/evolution.http';
+import { EvolutionMediaService } from '../../adapters/evolution/evolution.media';
+import { MediaPreparationService } from '../media/media-preparation.service';
+import { MediaSourceClient } from '../media/media-source.client';
+import { MediaSourcePolicy } from '../media/media-source-policy';
+import { MediaTempStore } from '../media/media-temp-store';
+import { AppConfig, configSchema } from '../../config/config.schema';
+import { MediaTimeoutException } from '../../common/media-request-context';
 import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
@@ -149,7 +163,9 @@ describe('BatchWorker', () => {
     expect(prisma.batchJob.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'job-1' },
-        data: expect.objectContaining({ status: 'completed' }),
+        data: expect.objectContaining({ status: 'completed' }) as {
+          status: string;
+        },
       }),
     );
   });
@@ -275,5 +291,151 @@ describe('BatchWorker', () => {
     );
     expect(mockAdapter.sendText).not.toHaveBeenCalled();
     expect(mockAdapter.sendDocument).not.toHaveBeenCalled();
+  });
+  it.each(['media', 'document'] as const)(
+    'batch %s waits for the real prepared provider response before counters and callback',
+    async (messageType) => {
+      const root = await mkdtemp(join(tmpdir(), 'mid03-batch-'));
+      let server: Server | undefined;
+      let store: MediaTempStore | undefined;
+      let respond: (() => void) | undefined;
+      let markReceived!: () => void;
+      const received = new Promise<void>((resolve) => {
+        markReceived = resolve;
+      });
+      const bodies: Record<string, unknown>[] = [];
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      try {
+        server = createServer((req, res) => {
+          const chunks: Buffer[] = [];
+          req.on('data', (chunk: Buffer) => chunks.push(chunk));
+          req.on('end', () => {
+            bodies.push(
+              JSON.parse(Buffer.concat(chunks).toString()) as Record<
+                string,
+                unknown
+              >,
+            );
+            respond = () => {
+              if (res.writableEnded || res.destroyed) return;
+              res.writeHead(201, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ key: { id: 'fixture-result' } }));
+            };
+            markReceived();
+          });
+        });
+        await new Promise<void>((resolve) =>
+          server!.listen(0, '127.0.0.1', resolve),
+        );
+        const config = new ConfigService(
+          configSchema.parse({
+            DATABASE_URL: 'postgresql://unused.invalid/test',
+            REDIS_URL: 'redis://unused.invalid',
+            ENCRYPTION_KEY: 'a'.repeat(64),
+            JWT_SECRET: 'fixture-unused-secret',
+            ADMIN_SECRET: 'fixture-unused-admin',
+            PROXY_TIMEOUT_MS: 50,
+            MEDIA_TMP_DIR: root,
+          }),
+        );
+        store = new MediaTempStore(config);
+        const http = new EvolutionHttpService(
+          config as unknown as ConfigService<AppConfig, true>,
+        );
+        const media = new EvolutionMediaService(
+          config,
+          new MediaPreparationService(
+            config,
+            new MediaSourceClient(new MediaSourcePolicy(config)),
+            store,
+          ),
+          http,
+        );
+        adapterResolver.resolve.mockReturnValue(
+          new EvolutionAdapter(http, media),
+        );
+        cache.increment.mockResolvedValue(1);
+        cache.get.mockResolvedValue(null);
+        const payload = {
+          ...basePayload,
+          messageType,
+          providerUrl:
+            'http://127.0.0.1:' + (server.address() as AddressInfo).port,
+          message: {
+            number: 'fixture',
+            media: 'data:application/pdf;base64,YWJj',
+            mediatype: 'video',
+            fileName: 'ação.pdf',
+            caption: 'Olá',
+            extra: true,
+          },
+          webhook: { url: 'https://callback.invalid' },
+        };
+        const processing = getProcessor()({ data: payload });
+        await received;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        expect(cache.increment).not.toHaveBeenCalled();
+        expect(batchWebhookQueue.add).not.toHaveBeenCalled();
+        respond!();
+        await processing;
+        expect(bodies).toEqual([
+          expect.objectContaining({
+            media: 'YWJj',
+            mediatype: messageType === 'document' ? 'document' : 'video',
+            fileName: 'ação.pdf',
+            extra: true,
+          }),
+        ]);
+        expect(cache.increment).toHaveBeenCalledWith('batch:sent:job-1');
+        expect(batchWebhookQueue.add).toHaveBeenCalledWith(
+          'notify',
+          expect.objectContaining({
+            success: true,
+            deliveryError: null,
+            messagePayload: payload.message,
+          }),
+          expect.any(Object),
+        );
+        expect(
+          (await readdir(root, { recursive: true })).filter((x) =>
+            x.endsWith('.bin'),
+          ),
+        ).toEqual([]);
+      } finally {
+        respond?.();
+        server?.closeAllConnections();
+        if (server?.listening)
+          await new Promise<void>((resolve) => server!.close(() => resolve()));
+        await store?.onModuleDestroy();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('keeps the callback contract while describing a media timeout as unconfirmed delivery', async () => {
+    cache.increment.mockResolvedValue(1);
+    cache.get.mockResolvedValue(null);
+    mockAdapter.sendMedia.mockRejectedValue(
+      new MediaTimeoutException('provider_timeout'),
+    );
+    await expect(
+      getProcessor()({
+        data: {
+          ...basePayload,
+          messageType: 'media',
+          webhook: { url: 'https://callback.invalid' },
+        },
+      }),
+    ).rejects.toBeInstanceOf(MediaTimeoutException);
+    expect(batchWebhookQueue.add).toHaveBeenCalledWith(
+      'notify',
+      expect.objectContaining({
+        success: false,
+        deliveryError:
+          'Media request timeout (provider_timeout); delivery not confirmed',
+      }),
+      expect.any(Object),
+    );
+    expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');
   });
 });

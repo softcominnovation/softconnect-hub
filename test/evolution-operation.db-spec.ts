@@ -114,7 +114,10 @@ const http = {
     ]
   >(),
 };
-const adapter = new EvolutionAdapter(http as unknown as EvolutionHttpService);
+const adapter = new EvolutionAdapter(
+  http as unknown as EvolutionHttpService,
+  {} as import('../src/adapters/evolution/evolution.media').EvolutionMediaService,
+);
 const adapters = {
   resolve: () => adapter,
 } as unknown as AdapterResolverService;

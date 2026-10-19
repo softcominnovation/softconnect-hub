@@ -33,6 +33,10 @@ import {
   MediaRequestContext,
   MediaTimeoutException,
 } from '../media-request-context';
+import {
+  MEDIA_ADMISSION,
+  AdmittedMediaRequest,
+} from '../../modules/media/media-http-admission';
 
 @Injectable()
 export class TimeoutInterceptor implements NestInterceptor {
@@ -98,6 +102,9 @@ export class TimeoutInterceptor implements NestInterceptor {
       ),
     );
     request.mediaExecution = execution;
+    execution.takeAdmission = (request as AdmittedMediaRequest)[
+      MEDIA_ADMISSION
+    ]?.take;
 
     return new Observable((subscriber) => {
       let inner: Subscription | undefined;
@@ -118,9 +125,7 @@ export class TimeoutInterceptor implements NestInterceptor {
             route: request.routeOptions?.url,
             durationMs: Math.round(execution.elapsedMs),
             timeoutMs: execution.timeoutMs,
-            providerTimeoutMs: execution.providerTimeoutMs,
-            callTimeoutMs: execution.callTimeoutMs,
-            calls: execution.calls,
+            ...execution.diagnostics(),
             statusCode: execution.clientDisconnected ? 499 : statusCode,
             upstreamStatusCode: execution.upstreamStatusCode,
             clientDisconnected: execution.clientDisconnected,

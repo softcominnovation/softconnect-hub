@@ -29,7 +29,37 @@ export class MediaRequestContext {
   calls = 0;
   callTimeoutMs?: number;
   upstreamStatusCode?: number;
-  failureSource?: 'upstream_http' | 'transport_error' | 'circuit_open';
+  failureSource?:
+    | 'upstream_http'
+    | 'transport_error'
+    | 'circuit_open'
+    | 'preparation_error'
+    | 'size_limit';
+  mediaBytes?: number;
+  preparationMs?: number;
+  providerMs?: number;
+  preparationStartedAt?: number;
+  providerStartedAt?: number;
+  takeAdmission?: () => () => void;
+
+  diagnostics() {
+    return {
+      mediaBytes: this.mediaBytes,
+      preparationMs:
+        this.preparationMs ??
+        (this.preparationStartedAt === undefined
+          ? undefined
+          : Math.round(performance.now() - this.preparationStartedAt)),
+      providerMs:
+        this.providerMs ??
+        (this.providerStartedAt === undefined
+          ? undefined
+          : Math.round(performance.now() - this.providerStartedAt)),
+      providerTimeoutMs: this.providerTimeoutMs,
+      callTimeoutMs: this.callTimeoutMs,
+      calls: this.calls,
+    };
+  }
 
   constructor(
     readonly timeoutMs: number,
@@ -76,6 +106,7 @@ export class MediaRequestContext {
   startProviderCall(): number {
     const timeoutMs = this.callTimeout(this.providerTimeoutMs);
     this.providerStarted = true;
+    this.providerStartedAt = performance.now();
     this.calls += 1;
     this.callTimeoutMs = timeoutMs;
     return timeoutMs;

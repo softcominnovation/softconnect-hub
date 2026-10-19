@@ -15,11 +15,12 @@ import type { ProviderContext } from '../../providers/whatsapp-provider.interfac
 import type { BatchJobPayload } from './batch.producer';
 import type { BatchWebhookJobPayload } from './batch-webhook.worker';
 import { BATCH_WEBHOOK_QUEUE } from './queue.constants';
+import { MediaTimeoutException } from '../../common/media-request-context';
 
 @Injectable()
 export class BatchWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BatchWorker.name);
-  private worker!: Worker;
+  private worker!: Worker<BatchJobPayload>;
 
   constructor(
     private readonly config: ConfigService,
@@ -33,10 +34,10 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
     const connection = parseRedisConnection(this.config);
     const concurrency = this.config.get<number>('WORKER_CONCURRENCY') ?? 10;
 
-    this.worker = new Worker(
+    this.worker = new Worker<BatchJobPayload>(
       'batch',
       async (job) => {
-        const payload = job.data as BatchJobPayload;
+        const payload = job.data;
         const ctx: ProviderContext = {
           providerUrl: payload.providerUrl,
           providerApiKey: payload.providerApiKey,
@@ -74,9 +75,11 @@ export class BatchWorker implements OnModuleInit, OnModuleDestroy {
         } catch (err) {
           success = false;
           deliveryError =
-            err instanceof Error
-              ? err.message || 'Unknown delivery error'
-              : 'Unknown delivery error';
+            err instanceof MediaTimeoutException
+              ? `Media request timeout (${err.reason}); delivery not confirmed`
+              : err instanceof Error
+                ? err.message || 'Unknown delivery error'
+                : 'Unknown delivery error';
           await this.cache.increment(`batch:failed:${payload.batchJobId}`);
           this.logger.error(
             `Batch job ${payload.batchJobId} failed: ${String(err)}`,

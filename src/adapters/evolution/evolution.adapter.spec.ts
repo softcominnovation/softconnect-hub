@@ -1,3 +1,4 @@
+import { EvolutionMediaService } from './evolution.media';
 import { EvolutionAdapter } from './evolution.adapter';
 import { BadRequestException } from '@nestjs/common';
 import { EvolutionHttpService } from './evolution.http';
@@ -19,10 +20,15 @@ const INSTANCE = 'minha-instancia';
 describe('EvolutionAdapter', () => {
   let adapter: EvolutionAdapter;
   let http: jest.Mocked<EvolutionHttpService>;
+  let media: { send: jest.Mock };
 
   beforeEach(() => {
     http = makeHttp();
-    adapter = new EvolutionAdapter(http);
+    media = { send: jest.fn() };
+    adapter = new EvolutionAdapter(
+      http,
+      media as unknown as EvolutionMediaService,
+    );
   });
 
   describe('Instance methods', () => {
@@ -258,17 +264,11 @@ describe('EvolutionAdapter', () => {
         mediatype: 'image' as const,
         media: 'https://img.test/foto.jpg',
       };
-      http.request.mockResolvedValue(msgResponse);
+      media.send.mockResolvedValue(msgResponse);
 
       await adapter.sendMedia(CTX, INSTANCE, dto);
 
-      expect(http.request).toHaveBeenCalledWith(
-        'post',
-        CTX.providerUrl,
-        CTX.providerApiKey,
-        `/message/sendMedia/${INSTANCE}`,
-        dto,
-      );
+      expect(media.send).toHaveBeenCalledWith(CTX, INSTANCE, dto, 'media');
     });
 
     it('sendDocument — injects mediatype:document and delegates to POST /message/sendMedia/:instance', async () => {
@@ -277,16 +277,15 @@ describe('EvolutionAdapter', () => {
         media: 'https://example.com/doc.pdf',
         fileName: 'doc.pdf',
       };
-      http.request.mockResolvedValue(msgResponse);
+      media.send.mockResolvedValue(msgResponse);
 
       await adapter.sendDocument(CTX, INSTANCE, dto);
 
-      expect(http.request).toHaveBeenCalledWith(
-        'post',
-        CTX.providerUrl,
-        CTX.providerApiKey,
-        `/message/sendMedia/${INSTANCE}`,
+      expect(media.send).toHaveBeenCalledWith(
+        CTX,
+        INSTANCE,
         { ...dto, mediatype: 'document' },
+        'media',
       );
     });
 
@@ -295,17 +294,11 @@ describe('EvolutionAdapter', () => {
         number: '5511999998888',
         sticker: 'https://example.com/sticker.webp',
       };
-      http.request.mockResolvedValue(msgResponse);
+      media.send.mockResolvedValue(msgResponse);
 
       await adapter.sendSticker(CTX, INSTANCE, dto);
 
-      expect(http.request).toHaveBeenCalledWith(
-        'post',
-        CTX.providerUrl,
-        CTX.providerApiKey,
-        `/message/sendSticker/${INSTANCE}`,
-        dto,
-      );
+      expect(media.send).toHaveBeenCalledWith(CTX, INSTANCE, dto, 'sticker');
     });
 
     it('sendPresence — delegates to POST /chat/sendPresence/:instance', async () => {

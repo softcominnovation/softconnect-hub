@@ -81,14 +81,19 @@ export class MessageService {
     dto: SendMediaDto,
     execution?: MediaRequestContext,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(
-      product,
-      instanceId,
-    );
-    const adapter = this.adapterResolver.resolve(adapterType);
-    execution?.assertActive();
-    if (execution) ctx.mediaExecution = execution;
-    return adapter.sendMedia(ctx, instanceName, dto);
+    const release = execution?.takeAdmission?.();
+    try {
+      const { ctx, adapterType, instanceName } = await this.ctx(
+        product,
+        instanceId,
+      );
+      const adapter = this.adapterResolver.resolve(adapterType);
+      execution?.assertActive();
+      if (execution) ctx.mediaExecution = execution;
+      return await adapter.sendMedia(ctx, instanceName, dto);
+    } finally {
+      release?.();
+    }
   }
 
   async sendList(
@@ -110,14 +115,19 @@ export class MessageService {
     dto: SendDocumentDto,
     execution?: MediaRequestContext,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(
-      product,
-      instanceId,
-    );
-    const adapter = this.adapterResolver.resolve(adapterType);
-    execution?.assertActive();
-    if (execution) ctx.mediaExecution = execution;
-    return adapter.sendDocument(ctx, instanceName, dto);
+    const release = execution?.takeAdmission?.();
+    try {
+      const { ctx, adapterType, instanceName } = await this.ctx(
+        product,
+        instanceId,
+      );
+      const adapter = this.adapterResolver.resolve(adapterType);
+      execution?.assertActive();
+      if (execution) ctx.mediaExecution = execution;
+      return await adapter.sendDocument(ctx, instanceName, dto);
+    } finally {
+      release?.();
+    }
   }
 
   async sendSticker(
@@ -126,14 +136,19 @@ export class MessageService {
     dto: SendStickerDto,
     execution?: MediaRequestContext,
   ): Promise<MessageResponseDto> {
-    const { ctx, adapterType, instanceName } = await this.ctx(
-      product,
-      instanceId,
-    );
-    const adapter = this.adapterResolver.resolve(adapterType);
-    execution?.assertActive();
-    if (execution) ctx.mediaExecution = execution;
-    return adapter.sendSticker(ctx, instanceName, dto);
+    const release = execution?.takeAdmission?.();
+    try {
+      const { ctx, adapterType, instanceName } = await this.ctx(
+        product,
+        instanceId,
+      );
+      const adapter = this.adapterResolver.resolve(adapterType);
+      execution?.assertActive();
+      if (execution) ctx.mediaExecution = execution;
+      return await adapter.sendSticker(ctx, instanceName, dto);
+    } finally {
+      release?.();
+    }
   }
 
   async sendPresence(

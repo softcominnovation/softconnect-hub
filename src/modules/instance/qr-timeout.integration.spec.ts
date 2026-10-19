@@ -1,3 +1,4 @@
+import { EvolutionMediaService } from '../../adapters/evolution/evolution.media';
 import { EvolutionProvisioningService } from '../provisioning/evolution-provisioning.service';
 import { EvolutionInventoryService } from '../provisioning/evolution-inventory.service';
 import { provisionPersistence } from '../../../test/support/provisioning-prisma.fixture';
@@ -202,6 +203,7 @@ describe('QR timeout — local HTTP integration', () => {
         AdminInstancesService,
         EvolutionHttpService,
         EvolutionAdapter,
+        { provide: EvolutionMediaService, useValue: {} },
         {
           provide: ConfigService,
           useValue: {
@@ -490,9 +492,11 @@ describe('QR timeout — local HTTP integration', () => {
         providerTimeoutMs: 1000,
         lastOperation: 'proxy',
         calls: 5,
-        callTimeoutMs: 1000,
         statusCode: 201,
       });
+      // The monotonic remaining budget can lose a millisecond before dispatch.
+      expect(log.callTimeoutMs).toBeGreaterThanOrEqual(990);
+      expect(log.callTimeoutMs).toBeLessThanOrEqual(1000);
       expect(JSON.stringify(terminalLog.mock.calls)).not.toMatch(
         /fixture-key|fixture-proxy-secret|fixture-qr-must-not-be-logged|fixture\.invalid/,
       );

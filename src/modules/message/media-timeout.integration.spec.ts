@@ -1,3 +1,13 @@
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { EvolutionMediaService } from '../../adapters/evolution/evolution.media';
+import { MediaPreparationService } from '../media/media-preparation.service';
+import { MediaTempStore } from '../media/media-temp-store';
+import { MediaSourceClient } from '../media/media-source.client';
+import { MediaSourcePolicy } from '../media/media-source-policy';
+import { installMediaHttpAdmission } from '../media/media-http-admission';
 import { ExecutionContext, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
@@ -33,6 +43,10 @@ import { MessageService } from './message.service';
 
 // Only loopback HTTP is real; no AppModule, database, Redis or external provider.
 describe('Media timeouts — HTTP contract', () => {
+  let root: string;
+  let sourceBytes: number;
+  let sourceCalls: number;
+  let sourceDelayMs: number;
   let upstream: Server;
   let app: NestFastifyApplication;
   let hubUrl: string;
@@ -49,7 +63,11 @@ describe('Media timeouts — HTTP contract', () => {
     status: 'PENDING',
   };
 
-  beforeEach(async () => {
+  async function setup(maxSizeMb = 50) {
+    root = await mkdtemp(join(tmpdir(), 'mid03-http-'));
+    sourceBytes = 64;
+    sourceCalls = 0;
+    sourceDelayMs = 0;
     received = [];
     resolverDelay = 0;
     receivedSignal = undefined;
@@ -66,8 +84,35 @@ describe('Media timeouts — HTTP contract', () => {
       ADMIN_SECRET: 'fixture-admin-not-used',
       PROXY_TIMEOUT_MS: liveTiming ? 15000 : 50,
       PROXY_MAX_RETRIES: 0,
+      MEDIA_TMP_DIR: root,
+      MEDIA_MAX_SIZE_MB: maxSizeMb,
     });
     upstream = createServer((request, reply) => {
+      if (request.method === 'GET') {
+        sourceCalls++;
+        reply.writeHead(200, { 'content-type': 'video/mp4' });
+        let remaining = sourceBytes;
+        const write = () => {
+          while (remaining > 0 && !reply.destroyed) {
+            const chunk = Buffer.alloc(Math.min(65536, remaining), 71);
+            remaining -= chunk.length;
+            if (!reply.write(chunk)) {
+              reply.once('drain', write);
+              return;
+            }
+          }
+          reply.end();
+        };
+        if (sourceDelayMs) {
+          const timer = setTimeout(() => {
+            timers.delete(timer);
+            write();
+          }, sourceDelayMs);
+          timers.add(timer);
+          reply.flushHeaders();
+        } else write();
+        return;
+      }
       const chunks: Buffer[] = [];
       request.on('data', (chunk: Buffer) => chunks.push(chunk));
       request.on('end', () => {
@@ -99,14 +144,29 @@ describe('Media timeouts — HTTP contract', () => {
     );
     const providerUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     const module = await Test.createTestingModule({
-      controllers: [MessageController],
+      controllers: [MessageController, MessageBatchController],
       providers: [
         MessageService,
         EvolutionAdapter,
+        EvolutionMediaService,
+        MediaPreparationService,
+        MediaTempStore,
+        MediaSourceClient,
+        MediaSourcePolicy,
         EvolutionHttpService,
         { provide: ConfigService, useValue: new ConfigService(values) },
-        { provide: PrismaService, useValue: {} },
-        { provide: BatchProducer, useValue: {} },
+        {
+          provide: PrismaService,
+          useValue: {
+            batchJob: {
+              create: jest.fn().mockResolvedValue({ id: 'fixture-batch-id' }),
+            },
+          },
+        },
+        {
+          provide: BatchProducer,
+          useValue: { addJobs: jest.fn().mockResolvedValue(undefined) },
+        },
         {
           provide: InstanceResolverService,
           useValue: {
@@ -155,20 +215,42 @@ describe('Media timeouts — HTTP contract', () => {
       { logger: false },
     );
     app.setGlobalPrefix('api/v1');
+    installMediaHttpAdmission(
+      app.getHttpAdapter().getInstance(),
+      app.get(ConfigService),
+    );
+    // Network policy is covered separately; only this named synthetic origin may use loopback.
+    jest
+      .spyOn(app.get(MediaSourcePolicy), 'resolve')
+      .mockImplementation((value) => {
+        const url = new URL(value);
+        if (url.hostname !== 'source.fixture')
+          throw new Error('Unexpected fixture source');
+        return Promise.resolve({
+          url: new URL(url.pathname + url.search, providerUrl),
+          address: '127.0.0.1',
+          family: 4,
+        });
+      });
     await app.listen(0, '127.0.0.1');
     hubUrl = await app.getUrl();
     log.mockClear();
-  });
+  }
 
-  afterEach(async () => {
+  beforeEach(() => setup());
+
+  async function teardown() {
     timers.forEach(clearTimeout);
     timers.clear();
     upstream?.closeAllConnections();
     if (upstream?.listening)
       await new Promise<void>((resolve) => upstream.close(() => resolve()));
     await app?.close();
+    if (root) await rm(root, { recursive: true, force: true });
     jest.restoreAllMocks();
-  });
+  }
+
+  afterEach(teardown);
 
   function post(route: string, body: Record<string, unknown>) {
     let request!: ClientRequest;
@@ -213,8 +295,8 @@ describe('Media timeouts — HTTP contract', () => {
     async (route) => {
       const payload = {
         number: 'fixture-recipient',
-        media: 'fixture-media',
-        sticker: 'fixture-sticker',
+        media: Buffer.from('fixture-media').toString('base64'),
+        sticker: Buffer.from('fixture-sticker').toString('base64'),
         mediatype: 'video',
         fileName: 'fixture.mp4',
         caption: 'fixture caption',
@@ -242,7 +324,7 @@ describe('Media timeouts — HTTP contract', () => {
   it('returns a real provider error with its current body', async () => {
     expect(
       await post('sendMedia', {
-        media: 'fixture',
+        media: Buffer.from('fixture').toString('base64'),
         fixtureDelayMs: 150,
         fixtureStatus: 422,
       }).result,
@@ -252,7 +334,10 @@ describe('Media timeouts — HTTP contract', () => {
   it('retains the existing 408 envelope when the media provider budget really expires', async () => {
     values.MEDIA_PROVIDER_TIMEOUT_MS = 40;
     expect(
-      await post('sendMedia', { media: 'fixture', fixtureDelayMs: 300 }).result,
+      await post('sendMedia', {
+        media: Buffer.from('fixture').toString('base64'),
+        fixtureDelayMs: 300,
+      }).result,
     ).toEqual({
       status: 408,
       body: {
@@ -294,7 +379,10 @@ describe('Media timeouts — HTTP contract', () => {
     const started = new Promise<void>((resolve) => {
       receivedSignal = resolve;
     });
-    const client = post('sendMedia', { media: 'fixture', fixtureDelayMs: 150 });
+    const client = post('sendMedia', {
+      media: Buffer.from('fixture').toString('base64'),
+      fixtureDelayMs: 150,
+    });
     const ended = client.result.catch(() => undefined);
     await started;
     client.request.destroy(new Error('fixture disconnect'));
@@ -313,7 +401,9 @@ describe('Media timeouts — HTTP contract', () => {
     const resolving = new Promise<void>((resolve) => {
       resolvingSignal = resolve;
     });
-    const client = post('sendMedia', { media: 'fixture' });
+    const client = post('sendMedia', {
+      media: Buffer.from('fixture').toString('base64'),
+    });
     const ended = client.result.catch(() => undefined);
     await resolving;
     client.request.destroy(new Error('fixture disconnect'));
@@ -329,7 +419,7 @@ describe('Media timeouts — HTTP contract', () => {
       const results = await Promise.all(
         [60000, 120000].map(async (delay) => {
           const result = await post('sendMedia', {
-            media: 'fixture-video',
+            media: Buffer.from('fixture-video').toString('base64'),
             mediatype: 'video',
             fixtureDelayMs: delay,
           }).result;
@@ -345,4 +435,187 @@ describe('Media timeouts — HTTP contract', () => {
     },
     150000,
   );
+  it.each(['sendMedia', 'sendDocument'])(
+    'streams a 50 MB URL through %s once, preserving bytes and cleaning storage',
+    async (route) => {
+      sourceBytes = 50000000;
+      const result = await post(route, {
+        number: 'fixture-recipient',
+        mediatype: 'video',
+        media: 'http://source.fixture/file.mp4?signature=secret-fixture',
+        fileName: 'ação.mp4',
+        caption: 'Olá 😀',
+        mimetype: 'video/mp4',
+        extra: { retain: true },
+      }).result;
+      expect(result).toEqual({ status: 201, body: response });
+      expect(sourceCalls).toBe(1);
+      const bytes = Buffer.from(received[0].body.media as string, 'base64');
+      expect(bytes.length).toBe(50000000);
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+        createHash('sha256')
+          .update(Buffer.alloc(sourceBytes, 71))
+          .digest('hex'),
+      );
+      expect(received[0].body).toMatchObject({
+        fileName: 'ação.mp4',
+        caption: 'Olá 😀',
+        extra: { retain: true },
+        mediatype: route === 'sendDocument' ? 'document' : 'video',
+      });
+      expect(
+        (await readdir(root, { recursive: true })).filter((x) =>
+          x.endsWith('.bin'),
+        ),
+      ).toEqual([]);
+      expect(log.mock.calls.flat().join(' ')).not.toContain(
+        'signature=secret-fixture',
+      );
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining('"mediaBytes":50000000'),
+      );
+    },
+    30000,
+  );
+
+  it('rejects a URL over 50 MB before dispatch and frees the admission', async () => {
+    sourceBytes = 50000001;
+    expect(
+      await post('sendMedia', { media: 'http://source.fixture/file' }).result,
+    ).toMatchObject({ status: 413 });
+    expect(received).toHaveLength(0);
+    expect(
+      (await readdir(root, { recursive: true })).filter((x) =>
+        x.endsWith('.bin'),
+      ),
+    ).toEqual([]);
+    expect(await post('sendMedia', { media: 'YQ==' }).result).toMatchObject({
+      status: 201,
+    });
+  }, 30000);
+
+  it('accepts base64 beyond the old 1 MiB body ceiling through the real endpoint', async () => {
+    const bytes = Buffer.alloc(1100000, 71);
+    expect(
+      await post('sendDocument', {
+        media: bytes.toString('base64'),
+        fileName: 'file.pdf',
+      }).result,
+    ).toMatchObject({ status: 201 });
+    expect(Buffer.from(received[0].body.media as string, 'base64')).toEqual(
+      bytes,
+    );
+  });
+
+  it('retains both occupied slots after a consumer disconnect until the provider finishes', async () => {
+    const firstStarted = new Promise<void>((resolve) => {
+      receivedSignal = resolve;
+    });
+    const first = post('sendMedia', { media: 'YQ==', fixtureDelayMs: 600 });
+    const firstEnded = first.result.catch(() => undefined);
+    await firstStarted;
+    const secondStarted = new Promise<void>((resolve) => {
+      receivedSignal = resolve;
+    });
+    const second = post('sendMedia', { media: 'YQ==', fixtureDelayMs: 600 });
+    await secondStarted;
+    first.request.destroy();
+    await firstEnded;
+    expect(await post('sendMedia', { media: 'YQ==' }).result).toMatchObject({
+      status: 503,
+    });
+    await second.result;
+    expect(await post('sendMedia', { media: 'YQ==' }).result).toMatchObject({
+      status: 201,
+    });
+    expect(
+      (await readdir(root, { recursive: true })).filter((x) =>
+        x.endsWith('.bin'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('classifies a slow source as download timeout, cleans storage and does not dispatch', async () => {
+    values.MEDIA_DOWNLOAD_TIMEOUT_MS = 40;
+    sourceDelayMs = 200;
+    expect(
+      await post('sendMedia', { media: 'http://source.fixture/slow' }).result,
+    ).toMatchObject({ status: 408 });
+    expect(received).toHaveLength(0);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('"source":"download_timeout"'),
+    );
+    expect(
+      (await readdir(root, { recursive: true })).filter((x) =>
+        x.endsWith('.bin'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('cancels URL preparation on disconnect without an Evolution POST', async () => {
+    sourceDelayMs = 500;
+    const client = post('sendMedia', { media: 'http://source.fixture/slow' });
+    const ended = client.result.catch(() => undefined);
+    while (!sourceCalls) await new Promise((resolve) => setTimeout(resolve, 5));
+    client.request.destroy();
+    await ended;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(received).toHaveLength(0);
+    expect(
+      (await readdir(root, { recursive: true })).filter((x) =>
+        x.endsWith('.bin'),
+      ),
+    ).toEqual([]);
+    sourceDelayMs = 0;
+    expect(await post('sendMedia', { media: 'YQ==' }).result).toMatchObject({
+      status: 201,
+    });
+  });
+  it.each(['send-media', 'send-document'])(
+    'preserves the immediate batch enqueue contract for %s without preparing or sending',
+    async (route) => {
+      const messages = [
+        {
+          number: 'fixture',
+          media: 'http://source.fixture/not-downloaded',
+          mediatype: 'video',
+        },
+      ];
+      expect(await post('batch/' + route, { messages }).result).toEqual({
+        status: 201,
+        body: { batchJobId: 'fixture-batch-id' },
+      });
+      expect(sourceCalls).toBe(0);
+      expect(received).toHaveLength(0);
+      expect(app.get(BatchProducer).addJobs).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('uses a custom 1 MB setting for both file admission and HTTP body ceiling on startup', async () => {
+    await teardown();
+    await setup(1);
+    sourceBytes = 1000000;
+    expect(
+      await post('sendDocument', {
+        media: 'http://source.fixture/document.pdf',
+        fileName: 'document.pdf',
+      }).result,
+    ).toMatchObject({ status: 201 });
+    sourceBytes = 1000001;
+    expect(
+      await post('sendMedia', { media: 'http://source.fixture/file' }).result,
+    ).toMatchObject({ status: 413 });
+    expect(received).toHaveLength(1);
+    const result = await app.inject({
+      method: 'POST',
+      url: '/api/v1/message/sendMedia/fixture-hub-id',
+      payload: { media: 'A'.repeat(2400000) },
+    });
+    expect(result.statusCode).toBe(413);
+    expect(result.json()).toEqual({
+      statusCode: 413,
+      error: 'PAYLOAD_TOO_LARGE',
+      message: 'Request body is too large',
+    });
+  });
 });

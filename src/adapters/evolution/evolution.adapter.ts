@@ -40,6 +40,7 @@ import {
   WhatsAppProvider,
 } from '../../providers/whatsapp-provider.interface';
 import { EvolutionHttpService } from './evolution.http';
+import { EvolutionMediaService } from './evolution.media';
 import {
   buildPublicProxy,
   canConfirmProxySet,
@@ -49,7 +50,10 @@ import {
 
 @Injectable()
 export class EvolutionAdapter implements WhatsAppProvider {
-  constructor(private readonly http: EvolutionHttpService) {}
+  constructor(
+    private readonly http: EvolutionHttpService,
+    private readonly media: EvolutionMediaService,
+  ) {}
 
   async createInstance(
     ctx: ProviderContext,
@@ -281,21 +285,7 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendMediaDto,
   ): Promise<MessageResponseDto> {
-    if (ctx.mediaExecution)
-      return this.http.requestMedia(
-        ctx.providerUrl,
-        ctx.providerApiKey,
-        `/message/sendMedia/${instanceName}`,
-        dto,
-        ctx.mediaExecution,
-      );
-    return this.http.request(
-      'post',
-      ctx.providerUrl,
-      ctx.providerApiKey,
-      `/message/sendMedia/${instanceName}`,
-      dto,
-    );
+    return this.media.send(ctx, instanceName, { ...dto }, 'media');
   }
 
   sendDocument(
@@ -303,20 +293,11 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendDocumentDto,
   ): Promise<MessageResponseDto> {
-    if (ctx.mediaExecution)
-      return this.http.requestMedia(
-        ctx.providerUrl,
-        ctx.providerApiKey,
-        `/message/sendMedia/${instanceName}`,
-        { ...dto, mediatype: 'document' },
-        ctx.mediaExecution,
-      );
-    return this.http.request(
-      'post',
-      ctx.providerUrl,
-      ctx.providerApiKey,
-      `/message/sendMedia/${instanceName}`,
+    return this.media.send(
+      ctx,
+      instanceName,
       { ...dto, mediatype: 'document' },
+      'media',
     );
   }
 
@@ -325,21 +306,7 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendStickerDto,
   ): Promise<MessageResponseDto> {
-    if (ctx.mediaExecution)
-      return this.http.requestMedia(
-        ctx.providerUrl,
-        ctx.providerApiKey,
-        `/message/sendSticker/${instanceName}`,
-        dto,
-        ctx.mediaExecution,
-      );
-    return this.http.request(
-      'post',
-      ctx.providerUrl,
-      ctx.providerApiKey,
-      `/message/sendSticker/${instanceName}`,
-      dto,
-    );
+    return this.media.send(ctx, instanceName, { ...dto }, 'sticker');
   }
 
   sendList(

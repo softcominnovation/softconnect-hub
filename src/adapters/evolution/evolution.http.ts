@@ -1,3 +1,4 @@
+import type { PreparedMedia } from '../../modules/media/prepared-media';
 import { withoutRelayToken } from '../../modules/webhook/relay-configuration';
 import {
   HttpException,
@@ -301,6 +302,7 @@ export class EvolutionHttpService {
     path: string,
     data: unknown,
     execution: MediaRequestContext,
+    prepared?: PreparedMedia,
   ): Promise<T> {
     execution.assertActive();
     try {
@@ -309,6 +311,8 @@ export class EvolutionHttpService {
       execution.failureSource = 'circuit_open';
       throw error;
     }
+    const body = prepared?.body(data as Record<string, unknown>);
+    const startedAt = performance.now();
     const timeoutMs = execution.startProviderCall();
     const deadlineAt = performance.now() + timeoutMs;
     const reason =
@@ -320,8 +324,9 @@ export class EvolutionHttpService {
       const response = await this.client.request<T>({
         method: 'post',
         url: `${vpsUrl}${path}`,
-        headers: { apikey: apiKey },
-        data,
+        headers: { apikey: apiKey, ...body?.headers },
+        data: body?.stream ?? data,
+        ...(body ? { maxRedirects: 0, maxBodyLength: Infinity } : {}),
         timeout: timeoutMs,
         signal: execution.signal,
       });
@@ -354,6 +359,7 @@ export class EvolutionHttpService {
       this.recordFailure(vpsUrl);
       throw error;
     } finally {
+      execution.providerMs = Math.round(performance.now() - startedAt);
       clearTimeout(timer);
     }
   }

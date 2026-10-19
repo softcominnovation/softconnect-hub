@@ -60,18 +60,20 @@ export class MediaPreparationService {
   ): Promise<PreparedMedia> {
     execution.assertActive();
     const value = payload[field];
-    if (typeof value !== 'string' || !value.length)
-      throw new BadRequestException(`Invalid ${field}`);
     const timeoutMs = execution.callTimeout(execution.downloadTimeoutMs);
     const reason =
       timeoutMs < execution.downloadTimeoutMs
         ? 'request_timeout'
         : 'download_timeout';
     const deadline = performance.now() + timeoutMs;
+    const startedAt = performance.now();
+    execution.preparationStartedAt = startedAt;
     const timer = setTimeout(() => execution.abort(reason), timeoutMs);
     let temp: Awaited<ReturnType<MediaTempStore['create']>> | undefined;
     let source: Readable | undefined;
     try {
+      if (typeof value !== 'string' || !value.length)
+        throw new BadRequestException(`Invalid ${field}`);
       const url = /^https?:\/\//i.test(value) ? value : undefined;
       let contentType: string | undefined;
       if (url) {
@@ -124,6 +126,7 @@ export class MediaPreparationService {
       if (performance.now() >= deadline) execution.abort(reason);
       execution.assertActive();
       if (!bytes) throw new BadRequestException('Empty media file');
+      execution.mediaBytes = bytes;
       return new PreparedMedia(
         temp.path,
         bytes,
@@ -133,6 +136,10 @@ export class MediaPreparationService {
         execution.signal,
       );
     } catch (error) {
+      execution.failureSource =
+        error instanceof PayloadTooLargeException
+          ? 'size_limit'
+          : 'preparation_error';
       source?.destroy();
       await temp?.dispose();
       execution.assertActive();
@@ -147,6 +154,7 @@ export class MediaPreparationService {
         );
       throw new BadGatewayException('Unable to prepare media');
     } finally {
+      execution.preparationMs = Math.round(performance.now() - startedAt);
       clearTimeout(timer);
     }
   }

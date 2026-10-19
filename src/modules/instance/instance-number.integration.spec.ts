@@ -1,3 +1,4 @@
+import { EvolutionMediaService } from '../../adapters/evolution/evolution.media';
 import { BadGatewayException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
@@ -144,6 +145,7 @@ describe('Instance number — Data/Admin query contracts', () => {
         AdminInstancesService,
         InstanceResolverService,
         EvolutionAdapter,
+        { provide: EvolutionMediaService, useValue: {} },
         {
           provide: ConfigService,
           useValue: new ConfigService({ ENCRYPTION_KEY: KEY, JWT_SECRET }),

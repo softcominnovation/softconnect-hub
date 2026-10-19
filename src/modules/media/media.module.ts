@@ -4,7 +4,7 @@ import { MediaSourceClient } from './media-source.client';
 import { MediaSourcePolicy } from './media-source-policy';
 import { MediaTempStore } from './media-temp-store';
 
-// Imported by the production message/batch modules during MID-03 integration.
+// Shared by the Evolution adapter in both API and batch runtimes.
 @Module({
   providers: [
     MediaSourcePolicy,

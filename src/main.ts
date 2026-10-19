@@ -6,7 +6,7 @@ import {
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
-
+import { installMediaHttpAdmission } from './modules/media/media-http-admission';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -15,6 +15,10 @@ async function bootstrap() {
   );
 
   app.setGlobalPrefix('api/v1');
+  installMediaHttpAdmission(
+    app.getHttpAdapter().getInstance(),
+    app.get(ConfigService),
+  );
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('SoftConnect 2.0 API')
