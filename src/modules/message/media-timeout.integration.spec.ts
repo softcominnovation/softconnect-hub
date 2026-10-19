@@ -47,6 +47,7 @@ describe('Media timeouts — HTTP contract', () => {
   let sourceBytes: number;
   let sourceCalls: number;
   let sourceDelayMs: number;
+  let sourceStatus: number;
   let upstream: Server;
   let app: NestFastifyApplication;
   let hubUrl: string;
@@ -68,6 +69,7 @@ describe('Media timeouts — HTTP contract', () => {
     sourceBytes = 64;
     sourceCalls = 0;
     sourceDelayMs = 0;
+    sourceStatus = 200;
     received = [];
     resolverDelay = 0;
     receivedSignal = undefined;
@@ -90,6 +92,11 @@ describe('Media timeouts — HTTP contract', () => {
     upstream = createServer((request, reply) => {
       if (request.method === 'GET') {
         sourceCalls++;
+        if (sourceStatus !== 200) {
+          reply.writeHead(sourceStatus);
+          reply.end('source rejection');
+          return;
+        }
         reply.writeHead(200, { 'content-type': 'video/mp4' });
         let remaining = sourceBytes;
         const write = () => {
@@ -251,6 +258,43 @@ describe('Media timeouts — HTTP contract', () => {
   }
 
   afterEach(teardown);
+
+  it.each([403, 404, 429, 503])(
+    'logs source status %i while preserving the public 502 envelope',
+    async (status) => {
+      sourceStatus = status;
+      const result = await post('sendMedia', {
+        number: 'fixture-number',
+        mediatype: 'image',
+        media: 'http://source.fixture/private-file?token=secret-source-token',
+      }).result;
+      expect(result).toEqual({
+        status: 502,
+        body: {
+          statusCode: 502,
+          error: 'BAD_GATEWAY',
+          message: 'Media source did not return a complete file',
+        },
+      });
+      expect(received).toHaveLength(0);
+      const lines = log.mock.calls.map((call: unknown[]) => String(call[0]));
+      const line = lines.find((entry) =>
+        entry.includes('media_request_finished'),
+      );
+      expect(line).toBeDefined();
+      expect(JSON.parse(line!)).toMatchObject({
+        event: 'media_request_finished',
+        sourceHost: 'source.fixture',
+        sourceStage: 'response',
+        sourceStatusCode: status,
+        sourceErrorCode: 'HTTP_STATUS',
+        statusCode: 502,
+        calls: 0,
+        source: 'preparation_error',
+      });
+      expect(lines.join('\n')).not.toMatch(/private-file|secret-source-token/);
+    },
+  );
 
   function post(route: string, body: Record<string, unknown>) {
     let request!: ClientRequest;

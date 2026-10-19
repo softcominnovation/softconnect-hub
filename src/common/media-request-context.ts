@@ -13,6 +13,19 @@ export type MediaStopReason =
   | 'download_timeout'
   | 'client_disconnected';
 
+export interface MediaSourceDiagnostics {
+  host?: string;
+  stage?:
+    | 'resolve'
+    | 'request'
+    | 'response'
+    | 'redirect'
+    | 'decode'
+    | 'download';
+  statusCode?: number;
+  errorCode?: string;
+}
+
 export class MediaTimeoutException extends RequestTimeoutException {
   constructor(readonly reason: MediaStopReason) {
     super('Request timeout');
@@ -41,6 +54,7 @@ export class MediaRequestContext {
   preparationStartedAt?: number;
   providerStartedAt?: number;
   takeAdmission?: () => () => void;
+  readonly mediaSource: MediaSourceDiagnostics = {};
 
   diagnostics() {
     return {
@@ -58,6 +72,10 @@ export class MediaRequestContext {
       providerTimeoutMs: this.providerTimeoutMs,
       callTimeoutMs: this.callTimeoutMs,
       calls: this.calls,
+      sourceHost: this.mediaSource.host,
+      sourceStage: this.mediaSource.stage,
+      sourceStatusCode: this.mediaSource.statusCode,
+      sourceErrorCode: this.mediaSource.errorCode,
     };
   }
 

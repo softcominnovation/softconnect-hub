@@ -57,7 +57,14 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
         });
         return;
       }
-      if (req.url === '/single-use') {
+      if (req.url === '/reset') {
+        req.socket.destroy();
+        return;
+      } else if (req.url === '/bad-gzip') {
+        res.writeHead(200, { 'Content-Encoding': 'gzip' });
+        res.end('not gzip');
+        return;
+      } else if (req.url === '/single-use') {
         if (requests.filter((r) => r.url === '/single-use').length > 1) {
           res.writeHead(403);
           res.end();
@@ -136,6 +143,75 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
     jest.restoreAllMocks();
   });
   const context = () => new MediaRequestContext(900000, 600000, 240000);
+
+  it('records original source status and stage without leaking URL or changing the error', async () => {
+    const execution = context();
+    await expect(
+      service.prepare(
+        { media: `${origin}/private-name?token=secret` },
+        'media',
+        execution,
+      ),
+    ).rejects.toMatchObject({
+      status: 502,
+      message: 'Media source did not return a complete file',
+    });
+    expect(execution.diagnostics()).toMatchObject({
+      sourceHost: 'files.fixture',
+      sourceStage: 'response',
+      sourceStatusCode: 403,
+      sourceErrorCode: 'HTTP_STATUS',
+      calls: 0,
+    });
+    expect(JSON.stringify(execution.diagnostics())).not.toMatch(
+      /private-name|secret|token/,
+    );
+  });
+
+  it('records DNS errors without their raw message', async () => {
+    jest
+      .spyOn(policy, 'resolve')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('secret URL details'), { code: 'ENOTFOUND' }),
+      );
+    const execution = context();
+    await expect(
+      service.prepare({ media: `${origin}/file` }, 'media', execution),
+    ).rejects.toMatchObject({
+      status: 502,
+      message: 'Unable to prepare media',
+    });
+    expect(execution.diagnostics()).toMatchObject({
+      sourceStage: 'resolve',
+      sourceErrorCode: 'ENOTFOUND',
+    });
+    expect(execution.mediaSource.statusCode).toBeUndefined();
+    expect(JSON.stringify(execution.diagnostics())).not.toContain('secret');
+  });
+
+  it('records socket failures before a source response', async () => {
+    const execution = context();
+    await expect(
+      service.prepare({ media: `${origin}/reset` }, 'media', execution),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(execution.diagnostics()).toMatchObject({
+      sourceStage: 'request',
+      sourceErrorCode: 'ECONNRESET',
+    });
+    expect(execution.mediaSource.statusCode).toBeUndefined();
+  });
+
+  it('records decompression failure separately from HTTP status', async () => {
+    const execution = context();
+    await expect(
+      service.prepare({ media: `${origin}/bad-gzip` }, 'media', execution),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(execution.diagnostics()).toMatchObject({
+      sourceStage: 'decode',
+      sourceStatusCode: 200,
+      sourceErrorCode: 'Z_DATA_ERROR',
+    });
+  });
 
   it.each(['media', 'sticker'] as const)(
     'sends the validated %s bytes over real HTTP as a JSON stream accepted by the synthetic provider',

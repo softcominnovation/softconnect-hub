@@ -77,7 +77,11 @@ export class MediaPreparationService {
       const url = /^https?:\/\//i.test(value) ? value : undefined;
       let contentType: string | undefined;
       if (url) {
-        const remote = await this.sources.open(url, execution.signal);
+        const remote = await this.sources.open(
+          url,
+          execution.signal,
+          execution.mediaSource,
+        );
         source = remote.stream;
         contentType = remote.contentType;
         if (
