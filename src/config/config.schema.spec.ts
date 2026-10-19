@@ -8,6 +8,56 @@ const environment = {
   ADMIN_SECRET: 'fixture-admin-secret',
 };
 
+describe('Media preparation configuration', () => {
+  it('defaults to 50 decimal MB, two HTTP executions and no private-origin exceptions', () => {
+    expect(configSchema.parse(environment)).toMatchObject({
+      MEDIA_MAX_SIZE_MB: 50,
+      MEDIA_MAX_CONCURRENT: 2,
+      MEDIA_SOURCE_ALLOWED_HOSTS: '',
+    });
+    expect(configSchema.parse(environment).MEDIA_TMP_DIR).toBeUndefined();
+  });
+  it.each(['MEDIA_MAX_SIZE_MB', 'MEDIA_MAX_CONCURRENT'])(
+    'rejects unsafe configuration for %s',
+    (key) => {
+      for (const value of [
+        0,
+        -1,
+        1.5,
+        Infinity,
+        NaN,
+        '',
+        'invalid',
+        Number.MAX_SAFE_INTEGER,
+      ])
+        expect(
+          configSchema.safeParse({ ...environment, [key]: value }).success,
+        ).toBe(false);
+    },
+  );
+  it('accepts Compose strings and an absolute temporary path', () => {
+    expect(
+      configSchema.parse({
+        ...environment,
+        MEDIA_MAX_SIZE_MB: '25',
+        MEDIA_MAX_CONCURRENT: '3',
+        MEDIA_TMP_DIR: '/tmp/media',
+        MEDIA_SOURCE_ALLOWED_HOSTS: 'https://files.fixture:8443',
+      }),
+    ).toMatchObject({ MEDIA_MAX_SIZE_MB: 25, MEDIA_MAX_CONCURRENT: 3 });
+    expect(
+      configSchema.safeParse({ ...environment, MEDIA_TMP_DIR: '../relative' })
+        .success,
+    ).toBe(false);
+    expect(
+      configSchema.safeParse({
+        ...environment,
+        MEDIA_SOURCE_ALLOWED_HOSTS: '*',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('Media timeout configuration', () => {
   it('adds independent finite defaults without changing legacy or QR limits', () => {
     expect(configSchema.parse(environment)).toMatchObject({

@@ -5,6 +5,11 @@ import {
   MEDIA_FINISH_MARGIN_MS,
   MEDIA_TIMEOUT_DEFAULTS,
 } from '../common/media-request-context';
+import { isAbsolute } from 'node:path';
+import {
+  MEDIA_MAX_CONFIG_SIZE_MB,
+  mediaAllowedOrigins,
+} from '../modules/media/media-limits';
 
 export const configSchema = z
   .object({
@@ -25,6 +30,36 @@ export const configSchema = z
     ADMIN_JWT_EXPIRY: z.coerce.number().int().positive().default(86400),
     DEFAULT_RATE_LIMIT: z.coerce.number().int().positive().default(100),
     PROXY_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    MEDIA_MAX_SIZE_MB: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(MEDIA_MAX_CONFIG_SIZE_MB)
+      .default(50),
+    MEDIA_MAX_CONCURRENT: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2147483647)
+      .default(2),
+    MEDIA_TMP_DIR: z
+      .string()
+      .refine(
+        (value) => isAbsolute(value) && !value.includes('\0'),
+        'MEDIA_TMP_DIR deve ser um caminho absoluto',
+      )
+      .optional(),
+    MEDIA_SOURCE_ALLOWED_HOSTS: z
+      .string()
+      .default('')
+      .refine((value) => {
+        try {
+          mediaAllowedOrigins(value);
+          return true;
+        } catch {
+          return false;
+        }
+      }, 'Use origens HTTP(S) exatas, separadas por vírgula, sem credenciais ou caminhos'),
     MEDIA_REQUEST_TIMEOUT_MS: z.coerce
       .number()
       .int()
