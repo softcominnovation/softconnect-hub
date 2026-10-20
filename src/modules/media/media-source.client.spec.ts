@@ -144,7 +144,7 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
   });
   const context = () => new MediaRequestContext(900000, 600000, 240000);
 
-  it('records original source status and stage without leaking URL or changing the error', async () => {
+  it('records original source status and returns a clear error without leaking URL', async () => {
     const execution = context();
     await expect(
       service.prepare(
@@ -154,7 +154,8 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
       ),
     ).rejects.toMatchObject({
       status: 502,
-      message: 'Media source did not return a complete file',
+      message:
+        'Não foi possível baixar a mídia. O servidor do arquivo respondeu HTTP 403: acesso negado. O envio à Evolution não foi iniciado.',
     });
     expect(execution.diagnostics()).toMatchObject({
       sourceHost: 'files.fixture',

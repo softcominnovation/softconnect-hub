@@ -56,6 +56,7 @@ describe('Media timeouts — HTTP contract', () => {
   let resolvingSignal: (() => void) | undefined;
   let resolverDelay: number;
   let log: jest.SpyInstance;
+  let errorLog: jest.SpyInstance;
   let values: ReturnType<typeof configSchema.parse>;
   const timers = new Set<NodeJS.Timeout>();
   const liveTiming = process.env.MEDIA_REALTIME_TESTS === 'true';
@@ -77,7 +78,9 @@ describe('Media timeouts — HTTP contract', () => {
     log = jest
       .spyOn(Logger.prototype, 'log')
       .mockImplementation(() => undefined);
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    errorLog = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
     values = configSchema.parse({
       DATABASE_URL: 'postgresql://fixture.invalid/not-used',
       REDIS_URL: 'redis://fixture.invalid/not-used',
@@ -242,6 +245,7 @@ describe('Media timeouts — HTTP contract', () => {
     await app.listen(0, '127.0.0.1');
     hubUrl = await app.getUrl();
     log.mockClear();
+    errorLog.mockClear();
   }
 
   beforeEach(() => setup());
@@ -259,9 +263,15 @@ describe('Media timeouts — HTTP contract', () => {
 
   afterEach(teardown);
 
-  it.each([403, 404, 429, 503])(
-    'logs source status %i while preserving the public 502 envelope',
-    async (status) => {
+  it.each([
+    [401, ': autenticação exigida'],
+    [403, ': acesso negado'],
+    [404, ': arquivo não encontrado'],
+    [429, ': limite de requisições da origem atingido'],
+    [503, ''],
+  ] as const)(
+    'logs source status %i as ERROR and explains it in the public 502 envelope',
+    async (status, detail) => {
       sourceStatus = status;
       const result = await post('sendMedia', {
         number: 'fixture-number',
@@ -273,17 +283,20 @@ describe('Media timeouts — HTTP contract', () => {
         body: {
           statusCode: 502,
           error: 'BAD_GATEWAY',
-          message: 'Media source did not return a complete file',
+          message: `Não foi possível baixar a mídia. O servidor do arquivo respondeu HTTP ${status}${detail}. O envio à Evolution não foi iniciado.`,
         },
       });
       expect(received).toHaveLength(0);
-      const lines = log.mock.calls.map((call: unknown[]) => String(call[0]));
+      const lines = errorLog.mock.calls.map((call: unknown[]) =>
+        String(call[0]),
+      );
       const line = lines.find((entry) =>
         entry.includes('media_request_finished'),
       );
       expect(line).toBeDefined();
       expect(JSON.parse(line!)).toMatchObject({
         event: 'media_request_finished',
+        level: 'ERROR',
         sourceHost: 'source.fixture',
         sourceStage: 'response',
         sourceStatusCode: status,
@@ -293,6 +306,9 @@ describe('Media timeouts — HTTP contract', () => {
         source: 'preparation_error',
       });
       expect(lines.join('\n')).not.toMatch(/private-file|secret-source-token/);
+      expect(log.mock.calls.flat().join(' ')).not.toContain(
+        'media_request_finished',
+      );
     },
   );
 
@@ -362,6 +378,12 @@ describe('Media timeouts — HTTP contract', () => {
               : payload,
         },
       ]);
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining('"level":"INFO"'),
+      );
+      expect(errorLog.mock.calls.flat().join(' ')).not.toContain(
+        'media_request_finished',
+      );
     },
   );
 
@@ -373,6 +395,9 @@ describe('Media timeouts — HTTP contract', () => {
         fixtureStatus: 422,
       }).result,
     ).toEqual({ status: 422, body: { error: 'fixture-provider-error' } });
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining('"source":"upstream_http"'),
+    );
   });
 
   it('retains the existing 408 envelope when the media provider budget really expires', async () => {
@@ -390,7 +415,7 @@ describe('Media timeouts — HTTP contract', () => {
         message: 'Request timeout',
       },
     });
-    expect(log).toHaveBeenCalledWith(
+    expect(errorLog).toHaveBeenCalledWith(
       expect.stringContaining('"source":"provider_timeout"'),
     );
   });
@@ -432,7 +457,7 @@ describe('Media timeouts — HTTP contract', () => {
     client.request.destroy(new Error('fixture disconnect'));
     await ended;
     await new Promise((resolve) => setTimeout(resolve, 250));
-    expect(log).toHaveBeenCalledWith(
+    expect(errorLog).toHaveBeenCalledWith(
       expect.stringMatching(
         /"upstreamStatusCode":201,"clientDisconnected":true/,
       ),
@@ -586,7 +611,7 @@ describe('Media timeouts — HTTP contract', () => {
       await post('sendMedia', { media: 'http://source.fixture/slow' }).result,
     ).toMatchObject({ status: 408 });
     expect(received).toHaveLength(0);
-    expect(log).toHaveBeenCalledWith(
+    expect(errorLog).toHaveBeenCalledWith(
       expect.stringContaining('"source":"download_timeout"'),
     );
     expect(

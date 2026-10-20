@@ -19,11 +19,15 @@ import { TimeoutInterceptor } from './timeout.interceptor';
 describe('TimeoutInterceptor — media lifecycle', () => {
   let interceptor: TimeoutInterceptor;
   let log: jest.SpyInstance;
+  let errorLog: jest.SpyInstance;
 
   beforeEach(() => {
     jest.useFakeTimers();
     log = jest
       .spyOn(Logger.prototype, 'log')
+      .mockImplementation(() => undefined);
+    errorLog = jest
+      .spyOn(Logger.prototype, 'error')
       .mockImplementation(() => undefined);
     interceptor = new TimeoutInterceptor(
       {
@@ -127,8 +131,8 @@ describe('TimeoutInterceptor — media lifecycle', () => {
       expect(log).not.toHaveBeenCalled();
       expect(reply.raw.listenerCount('close')).toBe(0);
       await jest.advanceTimersByTimeAsync(110000);
-      expect(log).toHaveBeenCalledTimes(1);
-      expect(log).toHaveBeenCalledWith(
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(
         expect.stringContaining('"clientDisconnected":true'),
       );
       expect(jest.getTimerCount()).toBe(0);
@@ -167,7 +171,7 @@ describe('TimeoutInterceptor — media lifecycle', () => {
     resume();
     await jest.advanceTimersByTimeAsync(1);
     expect(request.mediaExecution?.calls).toBe(0);
-    expect(log).toHaveBeenCalledTimes(1);
+    expect(errorLog).toHaveBeenCalledTimes(1);
     expect(jest.getTimerCount()).toBe(0);
   });
 
@@ -186,7 +190,7 @@ describe('TimeoutInterceptor — media lifecycle', () => {
     await result;
     await jest.advanceTimersByTimeAsync(900000);
     expect(request.mediaExecution?.reason).toBe('request_timeout');
-    expect(log).toHaveBeenCalledTimes(1);
+    expect(errorLog).toHaveBeenCalledTimes(1);
     expect(jest.getTimerCount()).toBe(0);
   });
 

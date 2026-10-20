@@ -67,29 +67,32 @@ export class EvolutionMediaService {
       clearTimeout(timer);
       await prepared?.dispose();
       // HTTP executions are logged by the interceptor; batch has no HTTP observer.
-      if (!ctx.mediaExecution)
-        this.logger.log(
-          JSON.stringify({
-            event: 'media_request_finished',
-            route: 'batch',
-            type:
-              field === 'sticker'
-                ? 'sticker'
-                : typeof payload.mediatype === 'string' &&
-                    ['image', 'video', 'audio', 'document'].includes(
-                      payload.mediatype,
-                    )
-                  ? payload.mediatype
-                  : 'media',
-            durationMs: Math.round(execution.elapsedMs),
-            timeoutMs: execution.timeoutMs,
-            ...execution.diagnostics(),
-            upstreamStatusCode: execution.upstreamStatusCode,
-            statusCode,
-            source:
-              execution.reason ?? execution.failureSource ?? 'upstream_success',
-          }),
-        );
+      if (!ctx.mediaExecution) {
+        const failed = statusCode >= 400;
+        const entry = JSON.stringify({
+          event: 'media_request_finished',
+          level: failed ? 'ERROR' : 'INFO',
+          route: 'batch',
+          type:
+            field === 'sticker'
+              ? 'sticker'
+              : typeof payload.mediatype === 'string' &&
+                  ['image', 'video', 'audio', 'document'].includes(
+                    payload.mediatype,
+                  )
+                ? payload.mediatype
+                : 'media',
+          durationMs: Math.round(execution.elapsedMs),
+          timeoutMs: execution.timeoutMs,
+          ...execution.diagnostics(),
+          upstreamStatusCode: execution.upstreamStatusCode,
+          statusCode,
+          source:
+            execution.reason ?? execution.failureSource ?? 'upstream_success',
+        });
+        if (failed) this.logger.error(entry);
+        else this.logger.log(entry);
+      }
     }
   }
 }

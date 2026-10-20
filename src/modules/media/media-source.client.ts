@@ -111,8 +111,15 @@ export class MediaSourceClient {
       if (status !== 200) {
         diagnostics.errorCode = 'HTTP_STATUS';
         response.destroy();
+        const reasons: Record<number, string> = {
+          401: 'autenticação exigida',
+          403: 'acesso negado',
+          404: 'arquivo não encontrado',
+          429: 'limite de requisições da origem atingido',
+        };
+        const detail = reasons[status] ? `: ${reasons[status]}` : '';
         throw new BadGatewayException(
-          'Media source did not return a complete file',
+          `Não foi possível baixar a mídia. O servidor do arquivo respondeu HTTP ${status}${detail}. O envio à Evolution não foi iniciado.`,
         );
       }
       const encoding = response.headers['content-encoding']

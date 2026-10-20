@@ -118,20 +118,23 @@ export class TimeoutInterceptor implements NestInterceptor {
         settled = true;
         clearTimeout(timer);
         removeListeners();
-        this.logger.log(
-          JSON.stringify({
-            event: 'media_request_finished',
-            requestId: request.id,
-            route: request.routeOptions?.url,
-            durationMs: Math.round(execution.elapsedMs),
-            timeoutMs: execution.timeoutMs,
-            ...execution.diagnostics(),
-            statusCode: execution.clientDisconnected ? 499 : statusCode,
-            upstreamStatusCode: execution.upstreamStatusCode,
-            clientDisconnected: execution.clientDisconnected,
-            source: execution.reason ?? source,
-          }),
-        );
+        const effectiveStatus = execution.clientDisconnected ? 499 : statusCode;
+        const failed = effectiveStatus >= 400;
+        const entry = JSON.stringify({
+          event: 'media_request_finished',
+          level: failed ? 'ERROR' : 'INFO',
+          requestId: request.id,
+          route: request.routeOptions?.url,
+          durationMs: Math.round(execution.elapsedMs),
+          timeoutMs: execution.timeoutMs,
+          ...execution.diagnostics(),
+          statusCode: effectiveStatus,
+          upstreamStatusCode: execution.upstreamStatusCode,
+          clientDisconnected: execution.clientDisconnected,
+          source: execution.reason ?? source,
+        });
+        if (failed) this.logger.error(entry);
+        else this.logger.log(entry);
       };
       const fail = (error: unknown) => {
         if (settled) return;
