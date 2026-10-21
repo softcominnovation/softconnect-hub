@@ -168,6 +168,9 @@ model VpsProvider {
   inventoryEntries   EvolutionInventoryEntry[]
   pendingRelayEvents PendingRelayEvent[]
   provisionings      InstanceProvisioning[]
+  maintenancePolicy ProviderMaintenancePolicy?
+  maintenanceObservations InstanceMaintenanceObservation[]
+  maintenanceActions InstanceMaintenanceAction[]
 
   @@index([canonicalEndpoint])
 }
@@ -199,6 +202,7 @@ model Instance {
   instanceName       String
   providerInstanceId String?
   instanceToken      String?
+  maintenanceObservations InstanceMaintenanceObservation[]
   hubToken           String   @unique
   phoneNumber        String?
   status             String   @default("disconnected")
@@ -329,6 +333,72 @@ model AuditLog {
 
   product  Product   @relation(fields: [productId], references: [id])
   instance Instance? @relation(fields: [instanceId], references: [id])
+}
+
+model ProviderMaintenancePolicy {
+  providerId String @id
+  enabled Boolean @default(false)
+  action String @default("disconnect")
+  mode String @default("observe")
+  connectingMaxAgeMinutes Int?
+  revision Int @default(0)
+  actor String?
+  generation String @default(uuid())
+  lastAttemptAt DateTime?
+  lastSuccessAt DateTime?
+  lastErrorCode String?
+  leaseOwner String?
+  leaseUntil DateTime?
+  fencingToken Int @default(0)
+  manualLeases Json @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  provider VpsProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  @@index([enabled, leaseUntil])
+}
+
+model InstanceMaintenanceObservation {
+  id String @id @default(uuid())
+  providerId String
+  instanceId String
+  productId String
+  instanceName String
+  remoteId String
+  remoteStatus String
+  generation String
+  episode String @default(uuid())
+  connectingObservedSince DateTime?
+  lastObservedAt DateTime
+  samples Int @default(1)
+  reason String?
+  provider VpsProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  @@unique([providerId, instanceId])
+  @@index([providerId, connectingObservedSince])
+}
+
+model InstanceMaintenanceAction {
+  id String @id @default(uuid())
+  providerId String
+  instanceId String
+  productId String
+  instanceName String
+  remoteId String
+  providerRevision Int
+  destinationFingerprint String?
+  policyRevision Int
+  episode String
+  action String
+  state String
+  reason String?
+  attempts Int @default(0)
+  nextCheckAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  provider VpsProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  @@unique([providerId, instanceId, episode, action])
+  @@index([providerId, createdAt, id])
+  @@index([state, nextCheckAt])
 }
 
 model AdminUser {

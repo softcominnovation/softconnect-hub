@@ -17,14 +17,17 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "start:worker": "node dist/main-worker-batch",
+    "start:maintenance": "node dist/main-worker-maintenance",
     "start:worker:dev": "ts-node -r tsconfig-paths/register src/main-worker-batch.ts",
+    "start:maintenance:dev": "ts-node -r tsconfig-paths/register src/main-worker-maintenance.ts",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "test:evolution-base": "jest --config ./test/jest-evolution-base.json --runInBand"
+    "test:evolution-base": "jest --config ./test/jest-evolution-base.json --runInBand",
+    "test:maintenance": "jest --config ./test/jest-maintenance.json --runInBand"
   },
   "dependencies": {
     "@fastify/swagger": "^9.7.0",

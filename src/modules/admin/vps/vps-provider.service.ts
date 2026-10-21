@@ -137,6 +137,25 @@ export class VpsProviderService {
           dto.adapterType !== current.adapterType) ||
         (policy?.vpsId !== undefined && policy.vpsId !== current.vpsId);
       const controlled = await isControlledEvolution(tx, current);
+      if (
+        (changesDestination || dto.isActive === false) &&
+        (await tx.instanceMaintenanceAction.findFirst({
+          where: {
+            providerId: id,
+            state: {
+              in: [
+                'dispatching',
+                'confirming',
+                'uncertain',
+                'local_cleanup_pending',
+              ],
+            },
+          },
+        }))
+      )
+        throw new ConflictException(
+          'Provider possui manutenção aguardando confirmação; destino preservado',
+        );
       if (changesDestination && (policy || controlled))
         await assertEvolutionUnused(tx, id, true);
       if (dto.isActive === false && (policy || controlled))

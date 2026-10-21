@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { maintenanceConfigShape } from '../modules/maintenance/maintenance.config';
 import { z } from 'zod';
 import { QR_FINISH_MARGIN_MS } from '../common/qr-request-context';
 import {
@@ -13,6 +14,7 @@ import {
 
 export const configSchema = z
   .object({
+    ...maintenanceConfigShape,
     DATABASE_URL: z.string().min(1, 'DATABASE_URL é obrigatória'),
     REDIS_URL: z.string().min(1, 'REDIS_URL é obrigatória'),
     ENCRYPTION_KEY: z
@@ -136,7 +138,9 @@ export const configSchema = z
       .default(false),
     HUB_MONITOR_URL: z.string().url().optional(),
     HUB_MONITOR_API_KEY: z.string().optional(),
-    RUNTIME_MODE: z.enum(['api', 'worker-batch']).default('api'),
+    RUNTIME_MODE: z
+      .enum(['api', 'worker-batch', 'worker-maintenance'])
+      .default('api'),
     WORKER_CONCURRENCY: z.coerce.number().min(1).max(100).default(10),
     RELAY_TRUSTED_PROXY_IPS: z
       .string()
@@ -148,6 +152,24 @@ export const configSchema = z
       ),
     RELAY_CONCURRENCY: z.coerce.number().min(1).max(100).default(20),
   })
+  .refine(
+    (config) =>
+      config.MAINTENANCE_MAX_OBSERVATION_GAP_MS >
+      config.MAINTENANCE_INTERVAL_MS,
+    {
+      path: ['MAINTENANCE_MAX_OBSERVATION_GAP_MS'],
+      message: 'A lacuna de observação deve ser maior que o intervalo',
+    },
+  )
+  .refine(
+    (config) =>
+      config.MAINTENANCE_CYCLE_TIMEOUT_MS >=
+      config.MAINTENANCE_HTTP_TIMEOUT_MS * 4,
+    {
+      path: ['MAINTENANCE_CYCLE_TIMEOUT_MS'],
+      message: 'O ciclo deve permitir consulta, ação e confirmação',
+    },
+  )
   .refine(
     (config) =>
       config.QR_PROVIDER_TIMEOUT_MS <=

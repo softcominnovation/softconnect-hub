@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MaintenanceModule } from '../../maintenance/maintenance.module';
 import { AuthModule } from '../../../auth/auth.module';
 import { CacheModule } from '../../../cache/cache.module';
 import { PrismaModule } from '../../../prisma/prisma.module';
@@ -14,6 +15,7 @@ import { EvolutionSetupService } from './evolution-setup.service';
 
 @Module({
   imports: [
+    MaintenanceModule,
     AuthModule,
     CacheModule,
     PrismaModule,

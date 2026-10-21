@@ -23,6 +23,7 @@ RUN npx prisma generate
 RUN npm run build \
     && test -f /app/dist/main.js \
     && test -f /app/dist/main-worker-batch.js \
+    && test -f /app/dist/main-worker-maintenance.js \
     || (echo "BUILD FAILED: dist entrypoints not found" && exit 1)
 
 # Remove devDependencies aqui no builder, onde o package.json está presente

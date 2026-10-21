@@ -595,10 +595,13 @@ export class EvolutionProvisioningService {
     productId: string,
     providerId: string,
     ticket?: ProvisioningTicket,
+    expectedIdentity?: { remoteId: string; name: string },
+    maintenanceCheck?: (tx: Prisma.TransactionClient) => Promise<void>,
   ) {
     const removed = await this.prisma.$transaction(async (tx) => {
       await lockProduct(tx, productId);
       await lockProvider(tx, providerId);
+      if (maintenanceCheck) await maintenanceCheck(tx);
       if (ticket) await this.owned(tx, ticket);
       else if (
         await tx.instanceProvisioning.findFirst({
@@ -610,6 +613,14 @@ export class EvolutionProvisioningService {
         where: { id: instanceId, productId, vpsProviderId: providerId },
       });
       if (!instance) return null;
+      if (
+        expectedIdentity &&
+        (instance.providerInstanceId !== expectedIdentity.remoteId ||
+          instance.instanceName !== expectedIdentity.name)
+      )
+        throw new ConflictException(
+          'Identidade da instância mudou; cadastro preservado',
+        );
       await tx.evolutionInventoryEntry.deleteMany({
         where: {
           vpsProviderId: providerId,

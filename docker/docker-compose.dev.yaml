@@ -31,6 +31,8 @@ services:
       - AUDIT_FLUSH_BATCH_SIZE=100
       - DEFAULT_ADAPTER_TYPE=evolution
       - RUNTIME_MODE=api
+      - MAINTENANCE_ENABLED=false
+      - MAINTENANCE_DRY_RUN=true
       # --- System Monitor do Hub (opcional) ---
       # - HUB_MONITOR_URL=${HUB_MONITOR_URL}
       # - HUB_MONITOR_API_KEY=${HUB_MONITOR_API_KEY}
@@ -81,6 +83,8 @@ services:
       - RUNTIME_MODE=worker-batch
       - WORKER_CONCURRENCY=5
       - DEFAULT_ADAPTER_TYPE=evolution
+      - MAINTENANCE_ENABLED=false
+      - MAINTENANCE_DRY_RUN=true
     deploy:
       mode: replicated
       replicas: 1
@@ -93,6 +97,44 @@ services:
           memory: 256M
         reservations:
           cpus: "0.1"
+          memory: 64M
+      update_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  softconnect-dev-maintenance:
+    image: ghcr.io/softcominnovation/softconnect:dev
+    command: ["node", "dist/main-worker-maintenance"]
+    networks:
+      - network_public
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD_DEV}@postgres_dev:5432/whatshub_dev?schema=public&connection_limit=2
+      - REDIS_URL=redis://redis_dev:6379/0
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - JWT_SECRET=${JWT_SECRET_DEV}
+      - ADMIN_SECRET=${ADMIN_SECRET}
+      - DEFAULT_ADAPTER_TYPE=evolution
+      - RUNTIME_MODE=worker-maintenance
+      - MAINTENANCE_ENABLED=false
+      - MAINTENANCE_DRY_RUN=true
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
           memory: 64M
       update_config:
         parallelism: 1

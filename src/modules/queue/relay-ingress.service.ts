@@ -9,7 +9,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PendingRelayEvent, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
+import { lockProvider } from '../provisioning/evolution-locks';
 import { PrismaService } from '../../prisma/prisma.service';
 import { decryptAES256GCM, encryptAES256GCM } from '../../common/crypto.util';
 import { relaySourceIp, RelayRequestOrigin } from '../../common/relay-origin';
@@ -198,6 +199,40 @@ export class RelayIngressService implements OnModuleInit, OnModuleDestroy {
           }
         : {}),
     };
+    const connectionData =
+      body.data && typeof body.data === 'object'
+        ? (body.data as Record<string, unknown>)
+        : undefined;
+    if (
+      instance &&
+      evidence.method === 'token' &&
+      this.config.get<boolean>('MAINTENANCE_ENABLED', false) &&
+      ['CONNECTION_UPDATE', 'connection.update'].includes(String(body.event)) &&
+      ['open', 'close'].includes(String(connectionData?.state))
+    ) {
+      await this.prisma.$transaction(async (tx) => {
+        await lockProvider(tx, instance.vpsProviderId);
+        const policy = await tx.providerMaintenancePolicy.findUnique({
+          where: { providerId: instance.vpsProviderId },
+        });
+        if (!policy?.enabled) return;
+        await tx.providerMaintenancePolicy.update({
+          where: { providerId: instance.vpsProviderId },
+          data: { generation: randomUUID() },
+        });
+        await tx.instanceMaintenanceObservation.updateMany({
+          where: {
+            providerId: instance.vpsProviderId,
+            instanceId: instance.id,
+          },
+          data: {
+            connectingObservedSince: null,
+            samples: 0,
+            reason: 'authenticated_state_change',
+          },
+        });
+      });
+    }
     const event = await this.prisma.pendingRelayEvent.create({
       data: {
         vpsProviderId:

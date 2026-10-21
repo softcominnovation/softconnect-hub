@@ -1,4 +1,6 @@
 import type { PreparedMedia } from '../../modules/media/prepared-media';
+import { Optional } from '@nestjs/common';
+import { MaintenanceGuard } from '../../modules/maintenance/maintenance.guard';
 import { withoutRelayToken } from '../../modules/webhook/relay-configuration';
 import {
   HttpException,
@@ -57,7 +59,10 @@ export class EvolutionHttpService {
   private readonly legacyTimeoutMs: number;
   private readonly breakers = new Map<string, CircuitBreaker>();
 
-  constructor(private readonly config: ConfigService<AppConfig, true>) {
+  constructor(
+    private readonly config: ConfigService<AppConfig, true>,
+    @Optional() private readonly maintenance?: MaintenanceGuard,
+  ) {
     const timeoutMs = this.config.get('PROXY_TIMEOUT_MS', { infer: true });
     this.legacyTimeoutMs = timeoutMs;
     this.threshold = this.config.get('CIRCUIT_BREAKER_THRESHOLD', {
@@ -251,6 +256,31 @@ export class EvolutionHttpService {
   }
 
   async request<T>(
+    method: 'get' | 'post' | 'put' | 'delete',
+    vpsUrl: string,
+    apiKey: string,
+    path: string,
+    data?: unknown,
+    params?: Record<string, string>,
+    qr?: QrHttpOptions,
+  ): Promise<T> {
+    const lifecycle =
+      /^\/instance\/(?:connect|restart|logout|delete)\/(.+)$/.exec(path);
+    const createName =
+      path === '/instance/create' && data && typeof data === 'object'
+        ? (data as { instanceName?: unknown }).instanceName
+        : undefined;
+    const name =
+      lifecycle?.[1] ??
+      (typeof createName === 'string' ? createName : undefined);
+    const call = () =>
+      this.requestInternal<T>(method, vpsUrl, apiKey, path, data, params, qr);
+    return name && this.maintenance
+      ? this.maintenance.run(vpsUrl, name, call)
+      : call();
+  }
+
+  private async requestInternal<T>(
     method: 'get' | 'post' | 'put' | 'delete',
     vpsUrl: string,
     apiKey: string,
