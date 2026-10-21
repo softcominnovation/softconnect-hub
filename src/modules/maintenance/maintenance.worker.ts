@@ -16,7 +16,10 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { invalidateInstanceCache } from '../../cache/instance-cache';
-import { EvolutionMaintenanceClient } from '../../adapters/evolution/evolution.maintenance';
+import {
+  EvolutionMaintenanceClient,
+  MaintenanceLogoutError,
+} from '../../adapters/evolution/evolution.maintenance';
 import { canonicalEvolutionEndpoint } from '../../prisma/evolution-identity';
 import { EvolutionProvisioningService } from '../provisioning/evolution-provisioning.service';
 import {
@@ -292,7 +295,10 @@ export class MaintenanceWorker
       }
       const observations = await this.record(lease, inventory);
       for (const observation of observations) {
-        if (cycle.remaining <= 0 || cycle.signal.aborted) break;
+        if (cycle.remaining <= 0 || cycle.signal.aborted) {
+          this.logger.log('event=maintenance_skip reason=cycle_action_limit');
+          break;
+        }
         if (
           eligibleObservation(
             observation,
@@ -498,7 +504,15 @@ export class MaintenanceWorker
         cycle.deadline,
       ),
     );
-    if (state !== 'connecting') {
+    const simulated =
+      maintenanceSettings(this.config).dryRun ||
+      lease.policy.mode === 'observe';
+    const stuckClosed =
+      state === 'close' && lease.policy.action === 'disconnect' && !simulated;
+    if (state !== 'connecting' && !stuckClosed) {
+      this.logger.log(
+        `event=maintenance_skip reason=live_state state=${state} instance=${observation.instanceName}`,
+      );
       await this.db.instanceMaintenanceObservation.updateMany({
         where: { id: observation.id, episode: observation.episode },
         data: {
@@ -511,9 +525,6 @@ export class MaintenanceWorker
     }
     if (cycle.remaining <= 0) return;
     cycle.remaining--;
-    const simulated =
-      maintenanceSettings(this.config).dryRun ||
-      lease.policy.mode === 'observe';
     const action = await this.db.$transaction(async (tx) => {
       await lockProvider(tx, lease.provider.id);
       const { policy, now } = await this.check(lease, tx);
@@ -616,8 +627,19 @@ export class MaintenanceWorker
                 cycle.deadline,
               ),
             ),
+          report: (result, fields = {}) => {
+            const detail = Object.entries(fields)
+              .map(([key, value]) => `${key}=${value}`)
+              .join(' ');
+            this.logger.log(
+              `event=maintenance_logout result=${result} actionId=${action.id} instance=${action.instanceName}${detail ? ` ${detail}` : ''}`,
+            );
+          },
         });
         if (outcome !== 'confirm') {
+          this.logger.error(
+            `event=maintenance_action result=${outcome === 'skipped_open' ? 'recovery_skipped' : 'recovery_failed'} actionId=${action.id} instance=${action.instanceName}`,
+          );
           await this.db.instanceMaintenanceAction.update({
             where: { id: action.id },
             data:
@@ -642,7 +664,13 @@ export class MaintenanceWorker
         where: { id: action.id },
         data: { state: 'confirming' },
       });
-    } catch {
+    } catch (error) {
+      const status =
+        error instanceof MaintenanceLogoutError ? error.status : '';
+      const code = error instanceof Error ? error.message : 'logout_failed';
+      this.logger.error(
+        `event=maintenance_action result=logout_failed actionId=${action.id} instance=${action.instanceName} code=${code} status=${status}`,
+      );
       await this.db.instanceMaintenanceAction.update({
         where: { id: action.id },
         data: { state: 'uncertain', reason: 'remote_result_unconfirmed' },

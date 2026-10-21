@@ -250,19 +250,20 @@ it('does not target open/close or an external unknown instance', async () => {
   await worker().scan();
   expect(client.act).not.toHaveBeenCalled();
 });
-it('skips connecting inventory if live state is closed', async () => {
+it('disconnects a connecting inventory whose live state is already closed', async () => {
   await enable();
   await age();
   live = 'close';
   await worker().scan();
-  expect(client.act).not.toHaveBeenCalled();
+  expect(client.act).toHaveBeenCalledTimes(1);
+  expect(client.connect).not.toHaveBeenCalled();
   expect(
     (
-      await db.instanceMaintenanceObservation.findFirst({
+      await db.instanceMaintenanceAction.findFirst({
         where: { providerId: provider.id },
       })
-    )?.reason,
-  ).toBe('live_state_divergence');
+    )?.state,
+  ).toBe('succeeded');
 });
 it('does not resend a timed-out deletion, and does not verify while disabled', async () => {
   await enable('delete');

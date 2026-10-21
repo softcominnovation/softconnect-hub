@@ -122,11 +122,22 @@ describe('logout recovery sequence', () => {
     expect(after.calls).toEqual(['logout', 'state', 'connect', 'state']);
   });
 
-  it('does not connect when the session is already closed', async () => {
+  it('still connects once when the refused logout is already closed', async () => {
     const run = harness();
-    run.setStates(['close']);
+    const reported: string[] = [];
+    run.setStates(['close', 'close']);
+    run.input.report = (result: string) => reported.push(result);
     await expect(dispatchDisconnect(run.input)).resolves.toBe('confirm');
-    expect(run.calls).toEqual(['logout', 'state']);
+    expect(run.calls).toEqual([
+      'logout',
+      'state',
+      'connect',
+      'state',
+      'logout',
+    ]);
+    expect(reported).toContain('logout_refused');
+    expect(reported).toContain('recovery_connect');
+    expect(JSON.stringify(reported)).not.toContain('QRSECRET');
   });
 
   it('stops one recovery on deadline without a further logout', async () => {
