@@ -36,6 +36,7 @@ import {
   MaintenanceRemote,
   observeConnecting,
 } from './maintenance.observation';
+import { dispatchDisconnect } from './logout-recovery';
 
 type Lease = {
   provider: VpsProvider;
@@ -582,15 +583,61 @@ export class MaintenanceWorker
       return;
     }
     try {
-      await this.remote(lease, cycle, () =>
-        this.client.act(
-          lease.provider,
-          action.instanceName,
-          action.action,
-          cycle.signal,
-          cycle.deadline,
-        ),
-      );
+      if (action.action === 'disconnect') {
+        const outcome = await dispatchDisconnect({
+          name: action.instanceName,
+          sawConnecting: true,
+          expired: () => cycle.signal.aborted || Date.now() >= cycle.deadline,
+          logout: () =>
+            this.remote(lease, cycle, () =>
+              this.client.act(
+                lease.provider,
+                action.instanceName,
+                'disconnect',
+                cycle.signal,
+                cycle.deadline,
+              ),
+            ),
+          state: () =>
+            this.remote(lease, cycle, () =>
+              this.client.state(
+                lease.provider,
+                action.instanceName,
+                cycle.signal,
+                cycle.deadline,
+              ),
+            ),
+          connect: () =>
+            this.remote(lease, cycle, () =>
+              this.client.connect(
+                lease.provider,
+                action.instanceName,
+                cycle.signal,
+                cycle.deadline,
+              ),
+            ),
+        });
+        if (outcome !== 'confirm') {
+          await this.db.instanceMaintenanceAction.update({
+            where: { id: action.id },
+            data:
+              outcome === 'skipped_open'
+                ? { state: 'skipped', reason: 'logout_recovery_open' }
+                : { state: 'failed', reason: 'logout_recovery_failed' },
+          });
+          return;
+        }
+      } else {
+        await this.remote(lease, cycle, () =>
+          this.client.act(
+            lease.provider,
+            action.instanceName,
+            action.action,
+            cycle.signal,
+            cycle.deadline,
+          ),
+        );
+      }
       await this.db.instanceMaintenanceAction.update({
         where: { id: action.id },
         data: { state: 'confirming' },

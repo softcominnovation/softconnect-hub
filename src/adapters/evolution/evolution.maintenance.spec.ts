@@ -2,7 +2,10 @@ import { createServer, Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { ConfigService } from '@nestjs/config';
 import { VpsProvider } from '@prisma/client';
-import { EvolutionMaintenanceClient } from './evolution.maintenance';
+import {
+  EvolutionMaintenanceClient,
+  MaintenanceLogoutError,
+} from './evolution.maintenance';
 import { encryptAES256GCM } from '../../common/crypto.util';
 
 describe('Evolution maintenance HTTP', () => {
@@ -111,5 +114,65 @@ describe('Evolution maintenance HTTP', () => {
       client.act(provider, 'test', 'delete', abort.signal, Date.now() + 1000),
     ).rejects.toThrow('deadline');
     expect(requests).toHaveLength(0);
+  });
+  it('keeps only the logout refusal text and drops pairing material', async () => {
+    status = 400;
+    body = {
+      error: 'Bad Request',
+      response: { message: ['The "test" instance is not connected'] },
+      base64: 'QRSECRET',
+      code: 'PAIRCODE',
+    };
+    await expect(
+      client.act(
+        provider,
+        'test',
+        'disconnect',
+        new AbortController().signal,
+        Date.now() + 1000,
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      errorLabel: 'Bad Request',
+      messageText: 'The "test" instance is not connected',
+    });
+    try {
+      await client.act(
+        provider,
+        'test',
+        'disconnect',
+        new AbortController().signal,
+        Date.now() + 1000,
+      );
+    } catch (error) {
+      expect(error).toBeInstanceOf(MaintenanceLogoutError);
+      expect(JSON.stringify(error)).not.toContain('QRSECRET');
+      expect(JSON.stringify(error)).not.toContain('PAIRCODE');
+    }
+  });
+  it('discards a connect payload after accepting it', async () => {
+    body = { count: 1, base64: 'QRSECRET', code: 'PAIRCODE' };
+    await expect(
+      client.connect(
+        provider,
+        'test',
+        new AbortController().signal,
+        Date.now() + 1000,
+      ),
+    ).resolves.toBeUndefined();
+    expect(requests).toEqual([
+      { method: 'GET', url: '/instance/connect/test' },
+    ]);
+  });
+  it('rejects an explicit connect error without keeping the payload', async () => {
+    body = { error: true, base64: 'QRSECRET' };
+    await expect(
+      client.connect(
+        provider,
+        'test',
+        new AbortController().signal,
+        Date.now() + 1000,
+      ),
+    ).rejects.toThrow('connect_rejected');
   });
 });

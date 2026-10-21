@@ -54,6 +54,7 @@ const client = {
     else live = 'close';
     return Promise.resolve({ status: 'SUCCESS', error: false });
   }),
+  connect: jest.fn(() => Promise.resolve()),
 };
 const worker = () =>
   new MaintenanceWorker(
@@ -75,6 +76,7 @@ beforeEach(async () => {
   client.inventory.mockClear();
   client.state.mockClear();
   client.act.mockClear();
+  client.connect.mockClear();
   const id = randomUUID();
   const vps = await db.vpsServer.create({
     data: { label: 'test', subdomain: id, ip: '127.0.0.1' },
@@ -189,6 +191,7 @@ it('simulates without mutation and does not duplicate the episode on the next cy
   await worker().scan();
   await worker().scan();
   expect(client.act).not.toHaveBeenCalled();
+  expect(client.connect).not.toHaveBeenCalled();
   expect(
     await db.instanceMaintenanceAction.count({
       where: { providerId: provider.id, state: 'simulated' },
@@ -200,6 +203,7 @@ it('disconnects and confirms close without removing Hub identity or capacity', a
   await age();
   await worker().scan();
   expect(client.act).toHaveBeenCalledTimes(1);
+  expect(client.connect).not.toHaveBeenCalled();
   expect(
     await db.instance.findUnique({ where: { id: instanceId } }),
   ).not.toBeNull();
@@ -220,6 +224,7 @@ it('confirms remote absence before deleting locally and updates occupancy', asyn
   await age();
   await worker().scan();
   expect(client.act).toHaveBeenCalledTimes(1);
+  expect(client.connect).not.toHaveBeenCalled();
   expect(
     await db.instance.findUnique({ where: { id: instanceId } }),
   ).toBeNull();
@@ -544,6 +549,7 @@ it('bounds actions with a simulated inventory of 200 managed instances',async()=
   const started=performance.now(),cpu=process.cpuUsage(),heap=process.memoryUsage().heapUsed;
   await worker().scan();
   expect(client.act).not.toHaveBeenCalled();
+  expect(client.connect).not.toHaveBeenCalled();
   expect(client.inventory).toHaveBeenCalledTimes(4);
   expect(client.state).toHaveBeenCalledTimes(3);
   expect(await db.instanceMaintenanceAction.count({where:{providerId:provider.id,state:'simulated'}})).toBe(3);
