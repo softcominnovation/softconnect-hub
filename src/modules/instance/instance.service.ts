@@ -120,6 +120,12 @@ export class InstanceService {
       execution,
     );
     const { ticket, payload } = prepared;
+    execution.createOutcome = {
+      result: 'not_sent',
+      code: 'before_dispatch',
+      observedAt: new Date().toISOString(),
+      deadlineAt: new Date(Date.now() + execution.remainingMs).toISOString(),
+    };
     try {
       const provider = await this.provisioning.markCreating(ticket, execution);
       execution.providerId = provider.id;
@@ -127,6 +133,14 @@ export class InstanceService {
       const adapter = this.adapterResolver.resolve(provider.adapterType);
       execution.assertActive();
       const result = await adapter.createInstance(ctx, payload.request);
+      execution.createOutcome = {
+        ...execution.createOutcome,
+        result: 'succeeded',
+        code: 'remote_success',
+        observedAt: new Date().toISOString(),
+        ...(result.instanceId ? { remoteId: result.instanceId } : {}),
+      };
+      await this.provisioning.recordOutcome(ticket, execution.createOutcome);
       // Persist even when the caller disconnected after the remote success.
       const instance = await this.provisioning.recordCreated(ticket, result);
       execution.instanceId = instance.id;
@@ -257,9 +271,40 @@ export class InstanceService {
       await this.provisioning.finish(ticket);
       execution.assertActive();
       return response;
+    } catch (error) {
+      try {
+        await this.provisioning.recordOutcome(ticket, execution.createOutcome);
+      } catch {
+        this.logger.error(
+          `event=instance_create_evidence_failed provisioningId=${ticket.id}`,
+        );
+      }
+      this.logger.error(
+        JSON.stringify({
+          event: 'instance_create_failed',
+          provisioningId: ticket.id,
+          productId: ticket.productId,
+          providerId: ticket.vpsProviderId,
+          stage:
+            execution.createOutcome.result === 'succeeded'
+              ? 'finalization'
+              : 'create',
+          result: execution.createOutcome.result,
+          code: execution.createOutcome.code,
+          upstreamStatusCode: execution.createOutcome.status,
+          source: execution.reason ?? execution.failureSource,
+        }),
+      );
+      throw error;
     } finally {
       // Terminal states are untouched; uncertain work stays on the same host.
-      await this.provisioning.abandon(ticket);
+      try {
+        await this.provisioning.abandon(ticket);
+      } catch {
+        this.logger.error(
+          `event=instance_create_release_failed provisioningId=${ticket.id}`,
+        );
+      }
     }
   }
 

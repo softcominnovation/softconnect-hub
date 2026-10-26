@@ -12,6 +12,7 @@ import { ProductsModule } from '../products/products.module';
 import { EvolutionChangesController } from './evolution-changes.controller';
 import { EvolutionChangesService } from './evolution-changes.service';
 import { EvolutionSetupService } from './evolution-setup.service';
+import { ProvisioningResolutionController } from './provisioning-resolution.controller';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { EvolutionSetupService } from './evolution-setup.service';
     ProductsModule,
   ],
   controllers: [
+    ProvisioningResolutionController,
     EvolutionsController,
     ProductEvolutionsController,
     EvolutionChangesController,

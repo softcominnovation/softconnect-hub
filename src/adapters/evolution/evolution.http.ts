@@ -1,4 +1,5 @@
 import type { PreparedMedia } from '../../modules/media/prepared-media';
+import { rejectedBeforeCreate } from '../../common/create-outcome';
 import { Optional } from '@nestjs/common';
 import { MaintenanceGuard } from '../../modules/maintenance/maintenance.guard';
 import { withoutRelayToken } from '../../modules/webhook/relay-configuration';
@@ -419,6 +420,13 @@ export class EvolutionHttpService {
     execution.callTimeoutMs = timeoutMs;
 
     try {
+      if (operation === 'create' && execution.createOutcome)
+        execution.createOutcome = {
+          ...execution.createOutcome,
+          result: 'unknown',
+          code: 'dispatch_started',
+          observedAt: new Date().toISOString(),
+        };
       const response = await this.client.request<T>({
         method,
         url: `${vpsUrl}${path}`,
@@ -428,10 +436,40 @@ export class EvolutionHttpService {
         timeout: timeoutMs,
         signal: execution.signal,
       });
-      execution.assertActive();
+      // A received create response is evidence even if the caller has disconnected.
+      // InstanceService persists it before checking the caller's deadline.
+      if (operation === 'create' && execution.createOutcome)
+        execution.createOutcome = {
+          ...execution.createOutcome,
+          result: 'succeeded',
+          code: 'remote_success',
+          status: response.status,
+          observedAt: new Date().toISOString(),
+        };
+      else execution.assertActive();
       this.recordSuccess(vpsUrl);
       return response.data;
     } catch (error) {
+      if (
+        operation === 'create' &&
+        execution.createOutcome &&
+        axios.isAxiosError(error)
+      ) {
+        const rejected =
+          !!error.response &&
+          rejectedBeforeCreate(error.response.status, error.response.data);
+        execution.createOutcome = {
+          ...execution.createOutcome,
+          result: rejected ? 'rejected' : 'unknown',
+          code: rejected
+            ? 'invalid_integration'
+            : error.response
+              ? 'upstream_unclassified'
+              : 'transport_unknown',
+          ...(error.response ? { status: error.response.status } : {}),
+          observedAt: new Date().toISOString(),
+        };
+      }
       if (
         !execution.signal.aborted &&
         axios.isAxiosError(error) &&

@@ -113,49 +113,20 @@ export function classifyProxyRead(
     : { kind: 'divergent' };
 }
 
-function withoutPasswords(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(withoutPasswords);
-  if (!isObject(value)) return value;
-  const copy: JsonObject = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (key !== 'password') copy[key] = withoutPasswords(entry);
-  }
-  return copy;
-}
-
-function replaceLeaf(
-  body: JsonObject,
-  depth: number,
-  leaf: JsonObject,
-): JsonObject {
-  if (depth === 0) return leaf;
-  return {
-    ...body,
-    proxy: replaceLeaf(body.proxy as JsonObject, depth - 1, leaf),
-  };
-}
-
 /**
- * Public creation complement: keeps the envelope returned by `/proxy/set`,
- * replaces its leaf with the confirmed public fields and never exposes
- * `password` at any level.
+ * Public creation complement: one flat configuration, regardless of the
+ * provider envelope. Only confirmed public fields are exposed.
  */
 export function buildPublicProxy(
   setBody: unknown,
   confirmed: JsonObject,
   instanceName: string,
-): unknown {
+): JsonObject | undefined {
   const located = locateProxyLeaf(setBody, instanceName);
   if (located === 'invalid') return undefined;
-  const base: JsonObject =
-    typeof located === 'object' ? { ...located.leaf } : {};
+  const base: JsonObject = {};
   for (const field of PUBLIC_PROXY_FIELDS) {
     if (field in confirmed) base[field] = confirmed[field];
-    else delete base[field];
   }
-  const envelope =
-    typeof located === 'object'
-      ? replaceLeaf(setBody as JsonObject, located.depth, base)
-      : { proxy: { instanceName, proxy: base } };
-  return withoutPasswords(envelope);
+  return base;
 }

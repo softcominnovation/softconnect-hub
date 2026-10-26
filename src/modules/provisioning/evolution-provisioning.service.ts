@@ -13,6 +13,7 @@ import { invalidateInstanceCache } from '../../cache/instance-cache';
 import { relayWebhook } from '../webhook/relay-configuration';
 import { decryptAES256GCM, hashSHA256 } from '../../common/crypto.util';
 import { QrRequestContext } from '../../common/qr-request-context';
+import { CreateOutcome, readEvidence } from '../../common/create-outcome';
 import { canonicalEvolutionEndpoint } from '../../prisma/evolution-identity';
 import { ensureEvolutionLink } from '../../prisma/evolution-links';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -422,7 +423,21 @@ export class EvolutionProvisioningService {
         throw new ConflictException('Reserva não está disponível para envio');
       await tx.instanceProvisioning.update({
         where: { id: row.id },
-        data: { state: 'creating', revision: { increment: 1 } },
+        data: {
+          state: 'creating',
+          revision: { increment: 1 },
+          outcomeEvidence: {
+            version: 1,
+            create: {
+              result: 'unknown',
+              code: 'dispatch_started',
+              observedAt: new Date().toISOString(),
+              deadlineAt: new Date(
+                Date.now() + execution.remainingMs,
+              ).toISOString(),
+            },
+          },
+        },
       });
       return provider;
     });
@@ -464,6 +479,52 @@ export class EvolutionProvisioningService {
     });
     await invalidateInstanceCache(this.cache, recorded);
     return recorded;
+  }
+
+  async recordOutcome(ticket: ProvisioningTicket, outcome: CreateOutcome) {
+    await this.prisma.$transaction(async (tx) => {
+      await lockProvider(tx, ticket.vpsProviderId);
+      const current = await tx.instanceProvisioning.findUnique({
+        where: { id: ticket.id },
+      });
+      if (!current || !OPEN_PROVISIONING_STATES.includes(current.state)) return;
+      const row = await this.owned(tx, ticket);
+      const evidence = readEvidence(row.outcomeEvidence);
+      // A later default/cleanup error cannot erase evidence of a completed POST.
+      if (
+        evidence.create &&
+        ['succeeded', 'rejected'].includes(evidence.create.result)
+      )
+        return;
+      await tx.instanceProvisioning.update({
+        where: { id: row.id },
+        data: {
+          outcomeEvidence: { ...evidence, create: outcome },
+          revision: { increment: 1 },
+          errorCode: outcome.result === 'succeeded' ? null : outcome.code,
+        },
+      });
+    });
+  }
+
+  async noteRecovery(ticket: ProvisioningTicket, code: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await lockProvider(tx, ticket.vpsProviderId);
+      const row = await this.owned(tx, ticket);
+      const evidence = readEvidence(row.outcomeEvidence);
+      const changed = evidence.recovery?.code !== code;
+      await tx.instanceProvisioning.update({
+        where: { id: row.id },
+        data: {
+          outcomeEvidence: {
+            ...evidence,
+            recovery: { code, observedAt: new Date().toISOString() },
+          },
+          revision: { increment: 1 },
+        },
+      });
+      return changed;
+    });
   }
 
   async markWebhookApplied(ticket: ProvisioningTicket) {
@@ -561,28 +622,48 @@ export class EvolutionProvisioningService {
         !OPEN_PROVISIONING_STATES.includes(row.state)
       )
         return;
-      const unsent = row.state === 'reserved';
+      const evidence = readEvidence(row.outcomeEvidence);
+      const noInstance =
+        !row.instanceId &&
+        !row.providerInstanceId &&
+        row.state !== 'cleanup_pending';
+      const unsent =
+        row.state === 'reserved' ||
+        (noInstance && evidence.create?.result === 'not_sent');
+      const rejected = noInstance && evidence.create?.result === 'rejected';
+      const terminal = unsent || rejected;
       await tx.instanceProvisioning.update({
         where: { id: row.id },
         data: {
           state: unsent
             ? 'released'
-            : row.state === 'cleanup_pending'
-              ? 'cleanup_pending'
-              : 'uncertain',
-          ...(unsent
+            : rejected
+              ? 'failed'
+              : row.state === 'cleanup_pending'
+                ? 'cleanup_pending'
+                : 'uncertain',
+          ...(terminal
             ? {
                 linkProductId: null,
                 linkVpsProviderId: null,
                 encryptedRequest: null,
               }
             : {}),
-          errorCode: unsent ? 'not_sent' : 'result_not_confirmed',
+          errorCode: unsent
+            ? 'not_sent'
+            : (row.errorCode ??
+              evidence.create?.code ??
+              'result_not_confirmed'),
           leaseOwner: null,
-          leaseExpiresAt: new Date(
-            Date.now() +
-              this.config.get<number>('EVOLUTION_RECOVERY_INTERVAL_MS', 15000),
-          ),
+          leaseExpiresAt: terminal
+            ? null
+            : new Date(
+                Date.now() +
+                  this.config.get<number>(
+                    'EVOLUTION_RECOVERY_INTERVAL_MS',
+                    15000,
+                  ),
+              ),
           revision: { increment: 1 },
         },
       });

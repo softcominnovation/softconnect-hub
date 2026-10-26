@@ -85,6 +85,119 @@ describe('QR timeout — local HTTP integration', () => {
   const publicConnect = '/api/v1/instance/hub-fixture/connect';
   const adminConnect =
     '/api/v1/admin/products/product-fixture/instances/hub-fixture/connect';
+
+  it.each([false, true])(
+    'releases a definitive create rejection, then accepts the corrected request (qrcode=%s)',
+    async (qrcode) => {
+      const db = app.get(PrismaService);
+      (db.instanceProvisioning.findFirst as jest.Mock).mockImplementation(
+        async () => {
+          const row = await db.instanceProvisioning.findUnique({
+            where: { id: 'intent-fixture' },
+          });
+          return row &&
+            ['reserved', 'creating', 'uncertain', 'cleanup_pending'].includes(
+              row.state,
+            )
+            ? row
+            : null;
+        },
+      );
+      const body = {
+        status: 400,
+        error: 'Bad Request',
+        response: { message: ['Invalid integration'] },
+      };
+      responseStatuses['/instance/create'] = 400;
+      responseBody = body;
+      const rejected = await app.inject({
+        method: 'POST',
+        url: '/api/v1/instance/create',
+        payload: { instanceName: 'diagnostic', integration: 'INVALID', qrcode },
+      });
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json()).toEqual(body);
+      const row = await db.instanceProvisioning.findUniqueOrThrow({
+        where: { id: 'intent-fixture' },
+      });
+      expect(row.state).toBe('failed');
+      expect(row.encryptedRequest).toBeNull();
+      expect(row.errorCode).toBe('invalid_integration');
+      responseStatuses['/instance/create'] = 201;
+      responseBody = {
+        instance: {
+          instanceName: 'diagnostic',
+          instanceId: 'remote-created',
+          status: 'close',
+        },
+      };
+      const corrected = await app.inject({
+        method: 'POST',
+        url: '/api/v1/instance/create',
+        payload: {
+          instanceName: 'diagnostic',
+          integration: 'WHATSAPP-BAILEYS',
+          qrcode,
+        },
+      });
+      expect(corrected.statusCode).toBe(201);
+      expect(corrected.json()).toMatchObject({
+        hubId: 'hub-created',
+        instanceId: 'remote-created',
+      });
+      expect(calls.filter((path) => path === '/instance/create')).toHaveLength(
+        2,
+      );
+    },
+  );
+
+  it('keeps an unclassified upstream 400 uncertain and does not issue another POST', async () => {
+    const db = app.get(PrismaService);
+    (db.instanceProvisioning.findFirst as jest.Mock).mockImplementation(
+      async () => {
+        const row = await db.instanceProvisioning.findUnique({
+          where: { id: 'intent-fixture' },
+        });
+        return row &&
+          ['reserved', 'creating', 'uncertain', 'cleanup_pending'].includes(
+            row.state,
+          )
+          ? row
+          : null;
+      },
+    );
+    responseStatuses['/instance/create'] = 400;
+    responseBody = { message: 'Unclassified failure' };
+    const payload = {
+      instanceName: 'uncertain-diagnostic',
+      integration: 'WHATSAPP-BAILEYS',
+      qrcode: true,
+    };
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/instance/create',
+          payload,
+        })
+      ).statusCode,
+    ).toBe(400);
+    const row = await db.instanceProvisioning.findUniqueOrThrow({
+      where: { id: 'intent-fixture' },
+    });
+    expect(row.state).toBe('uncertain');
+    expect(row.errorCode).toBe('upstream_unclassified');
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/api/v1/instance/create',
+          payload,
+        })
+      ).statusCode,
+    ).toBe(409);
+    expect(calls.filter((path) => path === '/instance/create')).toHaveLength(1);
+  });
   const product = {
     productId: 'product-fixture',
     apiKeyHash: 'fixture-hash',
@@ -786,7 +899,7 @@ describe('QR timeout — local HTTP integration', () => {
       ).not.toContain(stored.password);
     });
 
-    it('returns the confirmed proxy at the existing path without its password', async () => {
+    it('returns the confirmed proxy without wrappers, repeated identity or password', async () => {
       proxySetBody = {
         proxy: {
           instanceName: 'fixture',
@@ -805,16 +918,11 @@ describe('QR timeout — local HTTP integration', () => {
         status: 'connecting',
         hubId: 'hub-created',
         proxy: {
-          proxy: {
-            instanceName: 'fixture',
-            proxy: {
-              enabled: true,
-              host: stored.host,
-              port: stored.port,
-              protocol: stored.protocol,
-              username: stored.username,
-            },
-          },
+          enabled: true,
+          host: stored.host,
+          port: stored.port,
+          protocol: stored.protocol,
+          username: stored.username,
         },
       });
       expect(calls).toEqual([

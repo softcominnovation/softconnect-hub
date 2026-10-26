@@ -668,9 +668,7 @@ describe('EvolutionAdapter', () => {
         .mockResolvedValueOnce({ data: ACTIVE });
       const result = await apply();
       expect(result).toEqual({
-        proxy: {
-          proxy: { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE },
-        },
+        proxy: PUBLIC_ACTIVE,
       });
       expect(JSON.stringify(result)).not.toContain('password');
       expect(http.tryOptionalRequest.mock.calls[0][5]).toMatchObject({
@@ -681,13 +679,11 @@ describe('EvolutionAdapter', () => {
 
     it.each([
       [{ ...ACTIVE }, PUBLIC_ACTIVE],
-      [
-        { instanceName: INSTANCE, proxy: ACTIVE },
-        { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE },
-      ],
-      [null, { proxy: { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE } }],
+      [{ instanceName: INSTANCE, proxy: ACTIVE }, PUBLIC_ACTIVE],
+      [DISABLED_ENVELOPE, PUBLIC_ACTIVE],
+      [null, PUBLIC_ACTIVE],
     ])(
-      'keeps the public path of the set envelope %p',
+      'returns one flat public configuration for set envelope %p',
       async (set, expected) => {
         http.tryOptionalRequest
           .mockResolvedValueOnce({ data: set })
@@ -721,12 +717,7 @@ describe('EvolutionAdapter', () => {
           data: { ...ACTIVE, port: 80, username: null, password: null },
         });
       await expect(apply(sent)).resolves.toEqual({
-        proxy: {
-          proxy: {
-            instanceName: INSTANCE,
-            proxy: { ...PUBLIC_ACTIVE, port: 80, username: null },
-          },
-        },
+        proxy: { ...PUBLIC_ACTIVE, port: 80, username: null },
       });
     });
 
@@ -773,13 +764,13 @@ describe('EvolutionAdapter', () => {
           .mockResolvedValueOnce({ data: set })
           .mockResolvedValueOnce({ data: ACTIVE });
         await expect(apply()).resolves.toEqual({
-          proxy: { proxy: { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE } },
+          proxy: PUBLIC_ACTIVE,
         });
         expect(reads()).toBe(1);
       },
     );
 
-    it('preserves public metadata without mutating provider responses', async () => {
+    it('exposes only confirmed configuration without mutating provider responses', async () => {
       const set = {
         requestId: 'fixture-request',
         proxy: {
@@ -796,17 +787,7 @@ describe('EvolutionAdapter', () => {
         .mockResolvedValueOnce({ data: set })
         .mockResolvedValueOnce({ data: ACTIVE });
       const result = await apply();
-      expect(result.proxy).toEqual({
-        requestId: 'fixture-request',
-        proxy: {
-          instanceName: INSTANCE,
-          proxy: {
-            ...PUBLIC_ACTIVE,
-            id: 'fixture-proxy',
-            metadata: [{ kind: 'fixture' }],
-          },
-        },
-      });
+      expect(result.proxy).toEqual(PUBLIC_ACTIVE);
       expect(JSON.stringify(set)).toBe(original);
       expect(ACTIVE.password).toBe('fixture-secret');
     });
@@ -853,9 +834,7 @@ describe('EvolutionAdapter', () => {
         .mockResolvedValueOnce({ failure: 'upstream_http', status: 404 })
         .mockResolvedValueOnce({ data: ACTIVE });
       await expect(apply()).resolves.toEqual({
-        proxy: {
-          proxy: { instanceName: INSTANCE, proxy: PUBLIC_ACTIVE },
-        },
+        proxy: PUBLIC_ACTIVE,
       });
       expect(http.waitOptional.mock.calls).toEqual([
         [BUDGET, 100],
@@ -946,16 +925,11 @@ describe('EvolutionAdapter', () => {
         .mockResolvedValueOnce({ data: DISABLED_ENVELOPE.proxy.proxy });
       await expect(apply(disabled)).resolves.toEqual({
         proxy: {
-          proxy: {
-            instanceName: INSTANCE,
-            proxy: {
-              enabled: false,
-              host: '',
-              port: '',
-              protocol: '',
-              username: '',
-            },
-          },
+          enabled: false,
+          host: '',
+          port: '',
+          protocol: '',
+          username: '',
         },
       });
       expect(http.tryOptionalRequest.mock.calls[0][5]).toMatchObject({

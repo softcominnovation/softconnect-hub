@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
+import { readEvidence } from '../../common/create-outcome';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QrRequestContext } from '../../common/qr-request-context';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
@@ -133,16 +134,29 @@ export class EvolutionRecoveryService
     }
   }
 
-  async recover(id: string) {
-    const execution = (this.execution = this.budget());
+  async recover(
+    id: string,
+    claimed?: Awaited<ReturnType<EvolutionRecoveryService['claim']>>,
+    budget?: QrRequestContext,
+  ) {
+    const execution = budget ?? this.budget();
+    if (!claimed) this.execution = execution;
     const timer = setTimeout(
       () => execution.abort('request_timeout'),
       execution.remainingMs,
     );
     let ticket: Awaited<ReturnType<EvolutionRecoveryService['claim']>> = null;
     try {
-      ticket = await this.claim(id, execution);
+      ticket = claimed ?? (await this.claim(id, execution));
       if (!ticket) return;
+      const evidence = readEvidence(ticket.outcomeEvidence);
+      if (
+        !ticket.instanceId &&
+        !ticket.providerInstanceId &&
+        ticket.state !== 'cleanup_pending' &&
+        ['not_sent', 'rejected'].includes(evidence.create?.result ?? '')
+      )
+        return;
       const provider = await this.prisma.vpsProvider.findUniqueOrThrow({
         where: { id: ticket.vpsProviderId },
       });
@@ -167,17 +181,24 @@ export class EvolutionRecoveryService
             ticket.vpsProviderId,
             ticket,
           );
+        else await this.pending(ticket, 'remote_absent_outcome_unknown');
         return;
       }
       const session = sessions[index];
-      const knownId =
-        !!ticket.providerInstanceId &&
-        ticket.providerInstanceId === session.providerInstanceId;
+      const recordedId =
+        ticket.providerInstanceId ??
+        (evidence.create?.result === 'succeeded'
+          ? evidence.create.remoteId
+          : undefined);
+      const knownId = !!recordedId && recordedId === session.providerInstanceId;
       // Client tokens can be shared by many sessions. Only a generated token is
       // sufficient evidence when the POST's remote ID was never received.
       const uniqueToken =
         !payload.clientToken && payload.token === remoteToken(rows[index]);
-      if (!session.providerInstanceId || (!knownId && !uniqueToken)) return;
+      if (!session.providerInstanceId || (!knownId && !uniqueToken)) {
+        await this.pending(ticket, 'remote_identity_insufficient');
+        return;
+      }
       if (
         ticket.providerInstanceId &&
         ticket.providerInstanceId !== session.providerInstanceId
@@ -222,10 +243,18 @@ export class EvolutionRecoveryService
       }
       await this.provisioning.finish(ticket);
     } catch {
-      this.logger.warn('event=evolution_provisioning_unconfirmed');
+      if (ticket) {
+        try {
+          await this.pending(ticket, 'recovery_failed');
+        } catch {
+          this.logger.error(
+            `event=evolution_recovery_evidence_failed provisioningId=${id}`,
+          );
+        }
+      }
     } finally {
       clearTimeout(timer);
-      this.execution = undefined;
+      if (this.execution === execution) this.execution = undefined;
       if (ticket) {
         try {
           await this.provisioning.abandon(ticket);
@@ -234,6 +263,16 @@ export class EvolutionRecoveryService
         }
       }
     }
+  }
+
+  private async pending(
+    ticket: NonNullable<Awaited<ReturnType<EvolutionRecoveryService['claim']>>>,
+    code: string,
+  ) {
+    if (await this.provisioning.noteRecovery(ticket, code))
+      this.logger.warn(
+        `event=evolution_provisioning_pending provisioningId=${ticket.id} code=${code} action=admin_resolution`,
+      );
   }
 
   private async claim(id: string, execution: QrRequestContext) {

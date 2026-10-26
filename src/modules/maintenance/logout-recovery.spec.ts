@@ -28,18 +28,22 @@ describe('logout recovery sequence', () => {
       name,
       sawConnecting: true,
       expired: () => expired,
+      report: undefined as
+        | ((result: string, fields?: Record<string, string | number>) => void)
+        | undefined,
       logout: jest.fn(() => {
         calls.push('logout');
         logouts += 1;
         if (logouts === 1) throw refused(name);
+        return Promise.resolve();
       }),
       state: jest.fn(() => {
         calls.push('state');
-        return states.shift() ?? 'connecting';
+        return Promise.resolve(states.shift() ?? 'connecting');
       }),
       connect: jest.fn(() => {
         calls.push('connect');
-        return { base64: 'QRSECRET', code: 'PAIRCODE' };
+        return Promise.resolve({ base64: 'QRSECRET', code: 'PAIRCODE' });
       }),
     };
     return {
@@ -85,6 +89,7 @@ describe('logout recovery sequence', () => {
       run.calls.push('logout');
       attempts += 1;
       if (attempts === 1) throw refused('shop', 401);
+      return Promise.resolve();
     });
     await expect(dispatchDisconnect(run.input)).resolves.toBe('confirm');
     expect(run.calls).toEqual([
@@ -145,7 +150,7 @@ describe('logout recovery sequence', () => {
     run.input.state.mockImplementation(() => {
       run.calls.push('state');
       run.expire();
-      return 'connecting';
+      return Promise.resolve('connecting');
     });
     await expect(dispatchDisconnect(run.input)).resolves.toBe('failed');
     expect(run.calls).toEqual(['logout', 'state']);
@@ -270,7 +275,11 @@ describe('maintenance dispatch boundaries', () => {
     };
     const calls: string[] = [];
     const client = {
-      inventory: jest.fn(() => []),
+      inventory: jest.fn(() =>
+        Promise.resolve(
+          [] as Array<{ id: string; name: string; status: string }>,
+        ),
+      ),
       state: jest.fn(() => 'connecting'),
       act: jest.fn((_provider: VpsProvider, name: string, kind: string) => {
         calls.push(`${kind}:${name}`);

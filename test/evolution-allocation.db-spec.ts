@@ -2,7 +2,7 @@ import { InstanceService } from '../src/modules/instance/instance.service';
 import { InstanceResolverService } from '../src/resolver/instance.resolver';
 import { AuthCachePayload } from '../src/auth/apikey.guard';
 import { ConfigService } from '@nestjs/config';
-import { PrismaClient, VpsProvider, Product } from '@prisma/client';
+import { PrismaClient, VpsProvider, Product, Prisma } from '@prisma/client';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { CacheService } from '../src/cache/cache.service';
@@ -11,6 +11,26 @@ import { QrRequestContext } from '../src/common/qr-request-context';
 import { EvolutionInventoryService } from '../src/modules/provisioning/evolution-inventory.service';
 import { EvolutionProvisioningService } from '../src/modules/provisioning/evolution-provisioning.service';
 import { EvolutionRecoveryService } from '../src/modules/provisioning/evolution-recovery.service';
+import { ProvisioningResolutionService } from '../src/modules/provisioning/provisioning-resolution.service';
+import { CreateOutcome } from '../src/common/create-outcome';
+import { createServer } from 'node:http';
+import { AddressInfo } from 'node:net';
+import { Test } from '@nestjs/testing';
+import { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import {
+  FastifyAdapter,
+  NestFastifyApplication,
+} from '@nestjs/platform-fastify';
+import { InstanceController } from '../src/modules/instance/instance.controller';
+import { ApiKeyGuard } from '../src/auth/apikey.guard';
+import { RateLimitGuard } from '../src/auth/rate-limit.guard';
+import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
+import { TimeoutInterceptor } from '../src/common/interceptors/timeout.interceptor';
+import { EvolutionAdapter } from '../src/adapters/evolution/evolution.adapter';
+import { EvolutionHttpService } from '../src/adapters/evolution/evolution.http';
+import { EvolutionMediaService } from '../src/adapters/evolution/evolution.media';
+import { AppConfig } from '../src/config/config.schema';
 import { VpsProviderService } from '../src/modules/admin/vps/vps-provider.service';
 import { createLinkedInstance } from '../src/prisma/evolution-links';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -167,6 +187,443 @@ function cli(args: string[]) {
 }
 
 describe('Phase02 — PostgreSQL admission and recovery', () => {
+  it.each([false, true])(
+    'HTTP create through real adapter and PostgreSQL: 400 then corrected 201 (capacity=%s)',
+    async (capacity) => {
+      let rejected = true;
+      let posts = 0;
+      const upstream = createServer((req, res) => {
+        req.resume();
+        res.setHeader('content-type', 'application/json');
+        if (req.url === '/instance/fetchInstances') {
+          res.end('[]');
+          return;
+        }
+        posts++;
+        res.statusCode = rejected ? 400 : 201;
+        res.end(
+          JSON.stringify(
+            rejected
+              ? {
+                  status: 400,
+                  error: 'Bad Request',
+                  response: { message: ['Invalid integration'] },
+                }
+              : {
+                  instance: {
+                    instanceName: 'http-diagnostic',
+                    instanceId: randomUUID(),
+                    status: 'close',
+                  },
+                },
+          ),
+        );
+      });
+      await new Promise<void>((resolve) =>
+        upstream.listen(0, '127.0.0.1', resolve),
+      );
+      let app: NestFastifyApplication | undefined;
+      try {
+        const host = await provider();
+        const providerUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+        await prisma.vpsProvider.update({
+          where: { id: host.id },
+          data: { providerUrl, canonicalEndpoint: providerUrl },
+        });
+        const p = await product([host], capacity);
+        const http = new EvolutionHttpService(
+          config as unknown as ConfigService<AppConfig, true>,
+        );
+        const evo = new EvolutionAdapter(http, {} as EvolutionMediaService);
+        const router = {
+          resolve: () => evo,
+        } as unknown as AdapterResolverService;
+        const inventory = new EvolutionInventoryService(db, router, config);
+        const provisioning = new EvolutionProvisioningService(
+          db,
+          inventory,
+          router,
+          config,
+          cache,
+        );
+        const service = new InstanceService(
+          db,
+          cache,
+          router,
+          {} as InstanceResolverService,
+          config,
+          provisioning,
+        );
+        const module = await Test.createTestingModule({
+          controllers: [InstanceController],
+          providers: [{ provide: InstanceService, useValue: service }],
+        })
+          .overrideGuard(ApiKeyGuard)
+          .useValue({
+            canActivate(ctx: ExecutionContext) {
+              ctx
+                .switchToHttp()
+                .getRequest<{ product: AuthCachePayload }>().product = {
+                productId: p.id,
+              } as AuthCachePayload;
+              return true;
+            },
+          })
+          .overrideGuard(RateLimitGuard)
+          .useValue({ canActivate: () => true })
+          .compile();
+        app = module.createNestApplication<NestFastifyApplication>(
+          new FastifyAdapter(),
+          { logger: false },
+        );
+        app.useGlobalFilters(new HttpExceptionFilter());
+        app.useGlobalInterceptors(
+          new TimeoutInterceptor(config, new Reflector()),
+        );
+        await app.init();
+        await app.getHttpAdapter().getInstance().ready();
+        const body = {
+          instanceName: 'http-diagnostic',
+          integration: 'INVALID',
+          qrcode: false,
+          token: 'shared-client-token',
+        };
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/instance/create',
+              payload: body,
+            })
+          ).statusCode,
+        ).toBe(400);
+        expect(
+          await prisma.instance.count({ where: { productId: p.id } }),
+        ).toBe(0);
+        expect(
+          await prisma.instanceProvisioning.findFirst({
+            where: { productId: p.id },
+          }),
+        ).toMatchObject({ state: 'failed', errorCode: 'invalid_integration' });
+        rejected = false;
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/instance/create',
+              payload: { ...body, integration: 'WHATSAPP-BAILEYS' },
+            })
+          ).statusCode,
+        ).toBe(201);
+        expect(posts).toBe(2);
+        expect(
+          await prisma.instance.count({ where: { productId: p.id } }),
+        ).toBe(1);
+        expect(
+          await prisma.instanceProvisioning.count({
+            where: { productId: p.id, state: 'committed' },
+          }),
+        ).toBe(1);
+        expect(
+          await prisma.instanceProvisioning.count({
+            where: {
+              productId: p.id,
+              state: {
+                in: ['reserved', 'creating', 'uncertain', 'cleanup_pending'],
+              },
+            },
+          }),
+        ).toBe(0);
+      } finally {
+        if (app) await app.close();
+        upstream.closeAllConnections();
+        await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      }
+    },
+  );
+  const resolution = () =>
+    new ProvisioningResolutionService(
+      db,
+      a.provisioning,
+      a.recovery,
+      adapters,
+      config,
+    );
+  const evidence = (
+    result: CreateOutcome['result'],
+    code: CreateOutcome['code'],
+  ): CreateOutcome => ({
+    result,
+    code,
+    observedAt: new Date().toISOString(),
+    deadlineAt: new Date(0).toISOString(),
+  });
+  async function historical() {
+    const host = await provider();
+    const p = await product([host]);
+    const pending = await reserve(p);
+    await a.provisioning.markCreating(pending.ticket, budget());
+    await prisma.instanceProvisioning.update({
+      where: { id: pending.ticket.id },
+      data: {
+        outcomeEvidence: Prisma.DbNull,
+        state: 'uncertain',
+        leaseOwner: null,
+        leaseExpiresAt: new Date(0),
+      },
+    });
+    return {
+      host,
+      p,
+      row: await prisma.instanceProvisioning.findUniqueOrThrow({
+        where: { id: pending.ticket.id },
+      }),
+    };
+  }
+  const releaseInput = (revision: number) => ({
+    expectedRevision: revision,
+    action: 'release_absent' as const,
+    reason: 'isolated test',
+    acknowledgeUncertainOutcome: true,
+    confirmExecutorsDrained: true,
+  });
+
+  it.each(['not_sent', 'rejected'] as const)(
+    'finalizes persisted %s evidence after restart and frees the reservation',
+    async (result) => {
+      const host = await provider(1);
+      const p = await product([host]);
+      const pending = await reserve(p);
+      await a.provisioning.markCreating(pending.ticket, budget());
+      await a.provisioning.recordOutcome(
+        pending.ticket,
+        evidence(
+          result,
+          result === 'not_sent' ? 'before_dispatch' : 'invalid_integration',
+        ),
+      );
+      await expire(pending.ticket.id);
+      await b.recovery.recover(pending.ticket.id);
+      const row = await prisma.instanceProvisioning.findUniqueOrThrow({
+        where: { id: pending.ticket.id },
+      });
+      expect(row.state).toBe(result === 'not_sent' ? 'released' : 'failed');
+      expect(row.encryptedRequest).toBeNull();
+      await expect(reserve(p, row.instanceName)).resolves.toBeDefined();
+    },
+  );
+
+  it('recovers persisted success with client token and known remote ID after losing local persistence', async () => {
+    const host = await provider();
+    const p = await product([host]);
+    const pending = await a.provisioning.prepare(
+      p.id,
+      { instanceName: 'known-client-token', token: 'shared' },
+      budget(),
+    );
+    await a.provisioning.markCreating(pending.ticket, budget());
+    await a.provisioning.recordOutcome(pending.ticket, {
+      ...evidence('succeeded', 'remote_success'),
+      remoteId: 'success-known',
+    });
+    remote.set(host.providerUrl, [
+      {
+        instanceName: 'known-client-token',
+        id: 'success-known',
+        status: 'close',
+        token: 'shared',
+      } as InstanceDto,
+    ]);
+    await expire(pending.ticket.id);
+    await b.recovery.recover(pending.ticket.id);
+    expect(
+      await prisma.instanceProvisioning.findUniqueOrThrow({
+        where: { id: pending.ticket.id },
+      }),
+    ).toMatchObject({
+      state: 'committed',
+      providerInstanceId: 'success-known',
+    });
+    expect(adapter.createInstance).not.toHaveBeenCalled();
+  });
+
+  it('does not lose a cleanup cause during abandon', async () => {
+    const host = await provider();
+    const p = await product([host]);
+    const pending = await reserve(p);
+    await a.provisioning.markCreating(pending.ticket, budget());
+    await a.provisioning.markCleanup(pending.ticket);
+    await a.provisioning.abandon(pending.ticket);
+    expect(
+      await prisma.instanceProvisioning.findUniqueOrThrow({
+        where: { id: pending.ticket.id },
+      }),
+    ).toMatchObject({
+      state: 'cleanup_pending',
+      errorCode: 'required_defaults_failed',
+    });
+  });
+
+  it('releases only the claimed absent historical attempt, preserving audit and permitting a new reservation', async () => {
+    const { host, p, row } = await historical();
+    const service = resolution();
+    const result = await service.resolve(
+      host.id,
+      row.id,
+      releaseInput(row.revision),
+      'fixture-admin',
+    );
+    expect(result.state).toBe('released');
+    expect(result.evidence.resolution).toMatchObject({
+      actor: 'fixture-admin',
+      acknowledged: true,
+      executorsDrained: true,
+    });
+    expect(
+      await prisma.instanceProvisioning.count({ where: { id: row.id } }),
+    ).toBe(1);
+    await expect(
+      service.resolve(
+        host.id,
+        row.id,
+        releaseInput(row.revision),
+        'fixture-admin',
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(reserve(p, row.instanceName)).resolves.toBeDefined();
+    expect(adapter.deleteInstance).not.toHaveBeenCalled();
+  });
+
+  it('permits only one of two administrative releases of the same revision', async () => {
+    const { host, row } = await historical();
+    const results = await Promise.allSettled([
+      resolution().resolve(
+        host.id,
+        row.id,
+        releaseInput(row.revision),
+        'admin-a',
+      ),
+      new ProvisioningResolutionService(
+        replica as PrismaService,
+        b.provisioning,
+        b.recovery,
+        adapters,
+        config,
+      ).resolve(host.id, row.id, releaseInput(row.revision), 'admin-b'),
+    ]);
+    expect(results.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      (
+        await prisma.instanceProvisioning.findUniqueOrThrow({
+          where: { id: row.id },
+        })
+      ).state,
+    ).toBe('released');
+  });
+
+  it.each([
+    'active',
+    'deadline',
+    'drain',
+    'local',
+    'remote',
+    'revision',
+    'occupancy',
+    'query',
+    'provider',
+  ] as const)(
+    'refuses unsafe administrative release: %s',
+    async (condition) => {
+      const { host, p, row } = await historical();
+      const input = releaseInput(row.revision);
+      if (condition === 'active')
+        await prisma.instanceProvisioning.update({
+          where: { id: row.id },
+          data: {
+            leaseOwner: 'active',
+            leaseExpiresAt: new Date(Date.now() + 60000),
+          },
+        });
+      if (condition === 'deadline')
+        await prisma.instanceProvisioning.update({
+          where: { id: row.id },
+          data: {
+            outcomeEvidence: {
+              version: 1,
+              create: {
+                ...evidence('unknown', 'dispatch_started'),
+                deadlineAt: new Date(Date.now() + 60000).toISOString(),
+              },
+            },
+          },
+        });
+      if (condition === 'drain') input.confirmExecutorsDrained = false;
+      if (condition === 'local')
+        await prisma.instance.create({
+          data: {
+            productId: p.id,
+            vpsProviderId: host.id,
+            instanceName: row.instanceName,
+            hubToken: randomUUID(),
+            providerInstanceId: 'local-conflict',
+          },
+        });
+      if (condition === 'remote')
+        remote.set(host.providerUrl, [
+          {
+            instanceName: row.instanceName,
+            id: 'remote-present',
+            status: 'close',
+          },
+        ]);
+      if (condition === 'revision') input.expectedRevision--;
+      if (condition === 'occupancy')
+        adapter.fetchInstances.mockImplementationOnce(async () => {
+          await prisma.vpsProvider.update({
+            where: { id: host.id },
+            data: { occupancyRevision: { increment: 1 } },
+          });
+          return [];
+        });
+      if (condition === 'query')
+        adapter.fetchInstances.mockRejectedValueOnce(new Error('unavailable'));
+      await expect(
+        resolution().resolve(
+          condition === 'provider' ? randomUUID() : host.id,
+          row.id,
+          input,
+          'fixture-admin',
+        ),
+      ).rejects.toBeDefined();
+      expect(
+        (
+          await prisma.instanceProvisioning.findUniqueOrThrow({
+            where: { id: row.id },
+          })
+        ).state,
+      ).toBe('uncertain');
+      expect(adapter.deleteInstance).not.toHaveBeenCalled();
+    },
+  );
+
+  it('reconciliation records the actor but keeps a genuinely unknown result unresolved', async () => {
+    const { host, row } = await historical();
+    const result = await resolution().resolve(
+      host.id,
+      row.id,
+      {
+        expectedRevision: row.revision,
+        action: 'reconcile',
+        reason: 'inspect',
+      },
+      'fixture-admin',
+    );
+    expect(result.state).toBe('uncertain');
+    expect(result.evidence.recovery?.code).toBe(
+      'remote_absent_outcome_unknown',
+    );
+    expect(result.evidence.resolution?.actor).toBe('fixture-admin');
+  });
   beforeAll(async () => {
     const [{ count }] = await prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'`;

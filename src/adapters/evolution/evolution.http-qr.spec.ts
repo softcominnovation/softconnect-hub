@@ -39,6 +39,65 @@ describe('Evolution HTTP — QR policy', () => {
   });
   afterEach(() => jest.useRealTimers());
 
+  it('retains a successful create response received after cancellation', async () => {
+    const execution = new QrRequestContext(60000, 50000);
+    execution.createOutcome = {
+      result: 'not_sent',
+      code: 'before_dispatch',
+      observedAt: new Date().toISOString(),
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+    };
+    request.mockImplementationOnce(() => {
+      execution.abort('client_disconnected');
+      return Promise.resolve({
+        data: { instance: { instanceId: 'known-id' } },
+      });
+    });
+    await expect(
+      service.request(
+        'post',
+        URL,
+        'fixture-key',
+        '/instance/create',
+        {},
+        undefined,
+        { execution, operation: 'create' },
+      ),
+    ).resolves.toMatchObject({ instance: { instanceId: 'known-id' } });
+    expect(execution.createOutcome.result).toBe('succeeded');
+  });
+
+  it('records non-dispatch when the local circuit prevents the create call', async () => {
+    const execution = new QrRequestContext(60000, 50000);
+    execution.createOutcome = {
+      result: 'not_sent',
+      code: 'before_dispatch',
+      observedAt: new Date().toISOString(),
+      deadlineAt: new Date(Date.now() + 60000).toISOString(),
+    };
+    jest
+      .spyOn(
+        service as unknown as { checkCircuit(url: string): void },
+        'checkCircuit',
+      )
+      .mockImplementation(() => {
+        throw new Error('circuit');
+      });
+    await expect(
+      service.request(
+        'post',
+        URL,
+        'fixture-key',
+        '/instance/create',
+        {},
+        undefined,
+        { execution, operation: 'create' },
+      ),
+    ).rejects.toThrow('circuit');
+    expect(execution.createOutcome.result).toBe('not_sent');
+    expect(request).not.toHaveBeenCalled();
+  });
+
   function call(
     execution?: QrRequestContext,
     operation: QrOperation = 'connect',

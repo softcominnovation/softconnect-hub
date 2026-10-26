@@ -1,4 +1,5 @@
 import { RequestTimeoutException } from '@nestjs/common';
+import type { CreateOutcome } from './create-outcome';
 
 export const QR_FINISH_MARGIN_MS = 1000;
 
@@ -34,6 +35,7 @@ export class QrRequestContext {
   calls = 0;
   lastOperation?: QrOperation;
   callTimeoutMs?: number;
+  createOutcome?: CreateOutcome;
 
   constructor(
     readonly timeoutMs: number,
