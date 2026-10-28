@@ -57,7 +57,6 @@ export function observeConnecting(
     old?.connectingObservedSince &&
     old.remoteStatus === 'connecting' &&
     remote.status === 'connecting' &&
-    old.remoteId === remote.id &&
     old.instanceName === remote.name &&
     old.generation === generation &&
     now.getTime() >= old.lastObservedAt.getTime() &&

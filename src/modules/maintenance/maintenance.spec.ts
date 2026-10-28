@@ -60,7 +60,21 @@ describe('Maintenance policy and observation', () => {
     expect(next.connectingObservedSince).toBeNull();
     expect(eligibleObservation(next, new Date(600000), 1, 180000)).toBe(false);
   });
-  it.each(['gap', 'clock', 'identity', 'name', 'generation'])(
+  it('keeps the connecting clock when only the remote id changes', () => {
+    const old = first();
+    const next = observeConnecting(
+      old,
+      { ...remote, id: 'replacement' },
+      'generation',
+      new Date(60000),
+      180000,
+    );
+    expect(next.episode).toBe(old.episode);
+    expect(next.connectingObservedSince).toEqual(old.connectingObservedSince);
+    expect(next.remoteId).toBe('replacement');
+    expect(next.samples).toBe(old.samples + 1);
+  });
+  it.each(['gap', 'clock', 'name', 'generation'])(
     'restarts history for %s',
     (reason) => {
       const old = first();
@@ -71,7 +85,7 @@ describe('Maintenance policy and observation', () => {
         old,
         {
           ...remote,
-          id: reason === 'identity' ? 'new' : remote.id,
+          id: remote.id,
           name: reason === 'name' ? 'new' : remote.name,
         },
         reason === 'generation' ? 'new' : 'generation',

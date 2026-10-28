@@ -369,7 +369,7 @@ export class MaintenanceWorker
         const previous = await tx.instanceMaintenanceObservation.findMany({
           where: { providerId: lease.provider.id },
         });
-        const byId = new Map(inventory.map((r) => [r.id, r]));
+        const byName = new Map(inventory.map((r) => [r.name, r]));
         const oldById = new Map(previous.map((r) => [r.instanceId, r]));
         const result: InstanceMaintenanceObservation[] = [];
         const generation = fingerprint([
@@ -379,10 +379,8 @@ export class MaintenanceWorker
             maintenanceSettings(this.config).age,
         ]);
         for (const instance of instances) {
-          const remote = instance.providerInstanceId
-            ? byId.get(instance.providerInstanceId)
-            : undefined;
-          if (!remote || remote.name !== instance.instanceName) {
+          const remote = byName.get(instance.instanceName);
+          if (!remote) {
             await tx.instanceMaintenanceObservation.updateMany({
               where: { providerId: lease.provider.id, instanceId: instance.id },
               data: {
@@ -393,6 +391,12 @@ export class MaintenanceWorker
               },
             });
             continue;
+          }
+          if (instance.providerInstanceId !== remote.id) {
+            await tx.instance.update({
+              where: { id: instance.id },
+              data: { providerInstanceId: remote.id },
+            });
           }
           const data = observeConnecting(
             oldById.get(instance.id) ?? null,
@@ -490,7 +494,6 @@ export class MaintenanceWorker
     if (
       !inventory.some(
         (r) =>
-          r.id === observation.remoteId &&
           r.name === observation.instanceName &&
           r.status === 'connecting',
       )
@@ -548,7 +551,6 @@ export class MaintenanceWorker
         ) ||
         !instance ||
         instance.vpsProviderId !== lease.provider.id ||
-        instance.providerInstanceId !== observation.remoteId ||
         instance.instanceName !== observation.instanceName ||
         instance.productId !== observation.productId ||
         (await this.busy(
@@ -748,7 +750,7 @@ export class MaintenanceWorker
         return;
       }
     } else {
-      if (original?.name !== action.instanceName) {
+      if (!sameName) {
         await defer();
         return;
       }
@@ -767,7 +769,7 @@ export class MaintenanceWorker
       const instance = await this.db.instance.findUnique({
         where: { id: action.instanceId },
       });
-      if (instance && instance.providerInstanceId === action.remoteId)
+      if (instance && instance.instanceName === action.instanceName)
         await invalidateInstanceCache(this.cache, instance);
     }
     await this.check(lease);
@@ -776,7 +778,7 @@ export class MaintenanceWorker
       data: { state: 'succeeded', reason: null, nextCheckAt: null },
     });
     await this.db.instanceMaintenanceObservation.updateMany({
-      where: { instanceId: action.instanceId, remoteId: action.remoteId },
+      where: { instanceId: action.instanceId },
       data: {
         connectingObservedSince: null,
         samples: 0,
