@@ -163,7 +163,7 @@ Cada rota de Swagger exibe **apenas as tags e endpoints do seu escopo** — nunc
 
 ---
 
-## Passo 2.5: Dashboard Auth & Usuários Admin
+## Passo 2.5: Dashboard Auth & Usuários Admin 
 
 *Objetivo: Permitir que humanos se autentiquem no painel admin com email/senha e gerenciem outros usuários admin. Auth machine (ADMIN_SECRET) continua funcionando em paralelo.*
 
