@@ -9,6 +9,8 @@ import {
 import { FastifyReply } from 'fastify';
 import { QrTimeoutException } from '../qr-request-context';
 import { MediaTimeoutException } from '../media-request-context';
+import { SendInterruptedException } from '../send-request-context';
+import { ProviderResponseException } from '../provider-response.exception';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -17,6 +19,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     if (
       (exception instanceof QrTimeoutException ||
+        exception instanceof SendInterruptedException ||
         exception instanceof MediaTimeoutException) &&
       exception.reason === 'client_disconnected'
     )
@@ -35,6 +38,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<FastifyReply>();
+
+    if (exception instanceof ProviderResponseException) {
+      void response.status(exception.getStatus()).send(exception.providerBody);
+      return;
+    }
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();

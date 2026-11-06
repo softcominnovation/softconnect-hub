@@ -16,6 +16,7 @@ import { MEDIA_DEFAULT_MAX_SIZE_MB, mediaMaxBytes } from './media-limits';
 import { MediaSourceClient } from './media-source.client';
 import { MediaTempStore } from './media-temp-store';
 import { MediaField, PreparedMedia } from './prepared-media';
+import { mediaPreparationError } from './media-preparation-error';
 
 // Match the reference Evolution URL defaults before replacing the URL with base64.
 export function evolutionMediaDefaults(
@@ -84,6 +85,24 @@ export class MediaPreparationService {
         );
         source = remote.stream;
         contentType = remote.contentType;
+        const mime = contentType?.split(';')[0].trim().toLowerCase();
+        // HTML is valid as an explicitly requested document, but not as a PDF/image/video download.
+        const htmlDocument =
+          payload.mediatype === 'document' &&
+          (['text/html', 'application/xhtml+xml'].includes(
+            String(payload.mimetype).toLowerCase(),
+          ) ||
+            (typeof payload.fileName === 'string' &&
+              /\.(?:html?|xhtml)$/i.test(payload.fileName)));
+        if (
+          ['text/html', 'application/xhtml+xml'].includes(mime ?? '') &&
+          !htmlDocument
+        ) {
+          execution.mediaSource.errorCode = 'HTML_PAGE';
+          throw new BadGatewayException(
+            'O link retornou uma página HTML em vez da mídia esperada. Use um link direto para o arquivo ou envie seu conteúdo em base64. O envio à Evolution não foi iniciado.',
+          );
+        }
         if (
           remote.contentLength !== undefined &&
           remote.contentLength > this.maxBytes
@@ -156,7 +175,9 @@ export class MediaPreparationService {
         throw new ServiceUnavailableException(
           'Media temporary storage unavailable',
         );
-      throw new BadGatewayException('Unable to prepare media');
+      throw new BadGatewayException(
+        mediaPreparationError(execution.mediaSource),
+      );
     } finally {
       execution.preparationMs = Math.round(performance.now() - startedAt);
       clearTimeout(timer);

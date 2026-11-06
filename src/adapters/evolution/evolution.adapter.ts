@@ -271,12 +271,12 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendTextDto,
   ): Promise<MessageResponseDto> {
-    return this.http.request(
-      'post',
+    return this.http.requestSend(
       ctx.providerUrl,
       ctx.providerApiKey,
       `/message/sendText/${instanceName}`,
       dto,
+      ctx.sendExecution,
     );
   }
 
@@ -314,26 +314,26 @@ export class EvolutionAdapter implements WhatsAppProvider {
     instanceName: string,
     dto: SendListDto,
   ): Promise<MessageResponseDto> {
-    return this.http.request(
-      'post',
+    return this.http.requestSend(
       ctx.providerUrl,
       ctx.providerApiKey,
       `/message/sendList/${instanceName}`,
       dto,
+      ctx.sendExecution,
     );
   }
 
-  async sendPresence(
+  sendPresence(
     ctx: ProviderContext,
     instanceName: string,
     dto: SendPresenceDto,
-  ): Promise<void> {
-    await this.http.request(
-      'post',
+  ): Promise<unknown> {
+    return this.http.requestSend(
       ctx.providerUrl,
       ctx.providerApiKey,
       `/chat/sendPresence/${instanceName}`,
       dto,
+      ctx.sendExecution,
     );
   }
 

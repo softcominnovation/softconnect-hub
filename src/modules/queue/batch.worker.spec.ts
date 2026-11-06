@@ -12,6 +12,11 @@ import { MediaSourcePolicy } from '../media/media-source-policy';
 import { MediaTempStore } from '../media/media-temp-store';
 import { AppConfig, configSchema } from '../../config/config.schema';
 import { MediaTimeoutException } from '../../common/media-request-context';
+import { ProviderResponseException } from '../../common/provider-response.exception';
+import {
+  SEND_SAFETY_TIMEOUT_MESSAGE,
+  SendSafetyTimeoutException,
+} from '../../common/send-safety-timeout';
 import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
@@ -292,9 +297,16 @@ describe('BatchWorker', () => {
     expect(mockAdapter.sendText).not.toHaveBeenCalled();
     expect(mockAdapter.sendDocument).not.toHaveBeenCalled();
   });
-  it.each(['media', 'document'] as const)(
-    'batch %s waits for the real prepared provider response before counters and callback',
-    async (messageType) => {
+  it.each([
+    ['media', false],
+    ['document', false],
+    ['text', false],
+    ['media', true],
+    ['document', true],
+    ['text', true],
+  ] as const)(
+    'batch %s settles only after response or safety expiry (%s)',
+    async (messageType, expires) => {
       const root = await mkdtemp(join(tmpdir(), 'mid03-batch-'));
       let server: Server | undefined;
       let store: MediaTempStore | undefined;
@@ -335,6 +347,7 @@ describe('BatchWorker', () => {
             JWT_SECRET: 'fixture-unused-secret',
             ADMIN_SECRET: 'fixture-unused-admin',
             PROXY_TIMEOUT_MS: 50,
+            SEND_PROVIDER_TIMEOUT_MS: expires ? 70 : 1000,
             MEDIA_TMP_DIR: root,
           }),
         );
@@ -363,6 +376,7 @@ describe('BatchWorker', () => {
             'http://127.0.0.1:' + (server.address() as AddressInfo).port,
           message: {
             number: 'fixture',
+            text: 'Texto de teste',
             media: 'data:application/pdf;base64,YWJj',
             mediatype: 'video',
             fileName: 'ação.pdf',
@@ -371,16 +385,40 @@ describe('BatchWorker', () => {
           },
           webhook: { url: 'https://callback.invalid' },
         };
-        const processing = getProcessor()({ data: payload });
+        const processing = getProcessor()({ data: payload }).catch(
+          (error: unknown) => error,
+        );
         await received;
+        expect(cache.increment).not.toHaveBeenCalled();
+        expect(batchWebhookQueue.add).not.toHaveBeenCalled();
         await new Promise((resolve) => setTimeout(resolve, 120));
+        if (expires) {
+          expect(await processing).toBeInstanceOf(SendSafetyTimeoutException);
+          expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');
+          expect(cache.increment).not.toHaveBeenCalledWith('batch:sent:job-1');
+          expect(batchWebhookQueue.add).toHaveBeenCalledWith(
+            'notify',
+            expect.objectContaining({
+              success: false,
+              deliveryError: SEND_SAFETY_TIMEOUT_MESSAGE,
+            }),
+            expect.any(Object),
+          );
+          expect(bodies).toHaveLength(1);
+          expect(
+            (await readdir(root, { recursive: true })).filter((x) =>
+              x.endsWith('.bin'),
+            ),
+          ).toEqual([]);
+          return;
+        }
         expect(cache.increment).not.toHaveBeenCalled();
         expect(batchWebhookQueue.add).not.toHaveBeenCalled();
         respond!();
         await processing;
         expect(bodies).toEqual([
           expect.objectContaining({
-            media: 'YWJj',
+            media: messageType === 'text' ? payload.message.media : 'YWJj',
             mediatype: messageType === 'document' ? 'document' : 'video',
             fileName: 'ação.pdf',
             extra: true,
@@ -434,6 +472,32 @@ describe('BatchWorker', () => {
         deliveryError:
           'Media request timeout (provider_timeout); delivery not confirmed',
       }),
+      expect.any(Object),
+    );
+    expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');
+  });
+
+  it('keeps text timeout details in the existing batch callback envelope', async () => {
+    cache.increment.mockResolvedValue(1);
+    cache.get.mockResolvedValue(null);
+    const error = new ProviderResponseException(
+      { message: ['Timeout informado pela Evolution'] },
+      408,
+    );
+    expect(error.message).toBe('["Timeout informado pela Evolution"]');
+    mockAdapter.sendText.mockRejectedValue(error);
+    await expect(
+      getProcessor()({
+        data: {
+          ...basePayload,
+          messageType: 'text',
+          webhook: { url: 'https://callback.invalid' },
+        },
+      }),
+    ).rejects.toBe(error);
+    expect(batchWebhookQueue.add).toHaveBeenCalledWith(
+      'notify',
+      expect.objectContaining({ success: false, deliveryError: error.message }),
       expect.any(Object),
     );
     expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');

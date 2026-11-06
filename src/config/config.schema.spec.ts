@@ -8,6 +8,29 @@ const environment = {
   ADMIN_SECRET: 'fixture-admin-secret',
 };
 
+describe('Send safety deadline configuration', () => {
+  it('defaults to ten minutes and accepts an explicit Compose value', () => {
+    expect(configSchema.parse(environment).SEND_PROVIDER_TIMEOUT_MS).toBe(
+      600000,
+    );
+    expect(
+      configSchema.parse({ ...environment, SEND_PROVIDER_TIMEOUT_MS: '300000' })
+        .SEND_PROVIDER_TIMEOUT_MS,
+    ).toBe(300000);
+  });
+  it.each([0, -1, 0.5, Infinity, 'invalid', 2147483648])(
+    'rejects invalid safety deadline %s',
+    (value) => {
+      expect(
+        configSchema.safeParse({
+          ...environment,
+          SEND_PROVIDER_TIMEOUT_MS: value,
+        }).success,
+      ).toBe(false);
+    },
+  );
+});
+
 describe('Media preparation configuration', () => {
   it('defaults to 50 decimal MB, two HTTP executions and no private-origin exceptions', () => {
     expect(configSchema.parse(environment)).toMatchObject({

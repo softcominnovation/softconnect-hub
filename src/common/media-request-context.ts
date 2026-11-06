@@ -1,4 +1,5 @@
-import { RequestTimeoutException } from '@nestjs/common';
+import { HttpException, RequestTimeoutException } from '@nestjs/common';
+import { SendSafetyTimeoutException } from './send-safety-timeout';
 
 export const MEDIA_FINISH_MARGIN_MS = 30000;
 export const MEDIA_TIMEOUT_DEFAULTS = {
@@ -10,6 +11,7 @@ export const MEDIA_TIMEOUT_DEFAULTS = {
 export type MediaStopReason =
   | 'request_timeout'
   | 'provider_timeout'
+  | 'safety_timeout'
   | 'download_timeout'
   | 'client_disconnected';
 
@@ -39,6 +41,8 @@ export class MediaRequestContext {
   reason?: MediaStopReason;
   clientDisconnected = false;
   providerStarted = false;
+  waitForProvider = false;
+  onProviderStarted?: () => void;
   calls = 0;
   callTimeoutMs?: number;
   upstreamStatusCode?: number;
@@ -69,7 +73,10 @@ export class MediaRequestContext {
         (this.providerStartedAt === undefined
           ? undefined
           : Math.round(performance.now() - this.providerStartedAt)),
-      providerTimeoutMs: this.providerTimeoutMs,
+      providerTimeoutMs: this.waitForProvider
+        ? this.callTimeoutMs
+        : this.providerTimeoutMs,
+      waitForProvider: this.waitForProvider,
       callTimeoutMs: this.callTimeoutMs,
       calls: this.calls,
       sourceHost: this.mediaSource.host,
@@ -96,8 +103,15 @@ export class MediaRequestContext {
 
   abort(reason: MediaStopReason): void {
     if (this.signal.aborted) return;
+    if (
+      this.providerStarted &&
+      this.waitForProvider &&
+      reason !== 'safety_timeout' &&
+      reason !== 'client_disconnected'
+    )
+      return;
     this.reason = reason;
-    this.controller.abort(new MediaTimeoutException(reason));
+    this.controller.abort(this.timeoutException(reason));
   }
 
   disconnect(): void {
@@ -106,9 +120,24 @@ export class MediaRequestContext {
   }
 
   assertActive(): void {
-    if (!this.signal.aborted && this.remainingMs <= 0)
+    if (
+      !this.signal.aborted &&
+      !(this.providerStarted && this.waitForProvider) &&
+      this.remainingMs <= 0
+    )
       this.abort('request_timeout');
-    if (this.reason) throw new MediaTimeoutException(this.reason);
+    if (this.reason) throw this.timeoutException(this.reason);
+  }
+
+  timeoutException(reason: MediaStopReason): HttpException {
+    if (reason === 'safety_timeout') return new SendSafetyTimeoutException();
+    return new MediaTimeoutException(reason);
+  }
+
+  confirmProviderResponse(status: number): void {
+    this.upstreamStatusCode = status;
+    // A complete response already obtained takes precedence over a concurrent timer.
+    if (this.reason === 'safety_timeout') this.reason = undefined;
   }
 
   callTimeout(limitMs: number): number {
@@ -121,12 +150,17 @@ export class MediaRequestContext {
     return Math.min(limitMs, available);
   }
 
-  startProviderCall(): number {
-    const timeoutMs = this.callTimeout(this.providerTimeoutMs);
+  startProviderCall(waitForProvider = false): number {
+    this.assertActive();
+    this.waitForProvider = waitForProvider;
+    const timeoutMs = waitForProvider
+      ? 0
+      : this.callTimeout(this.providerTimeoutMs);
     this.providerStarted = true;
     this.providerStartedAt = performance.now();
     this.calls += 1;
     this.callTimeoutMs = timeoutMs;
+    this.onProviderStarted?.();
     return timeoutMs;
   }
 }

@@ -48,11 +48,16 @@ export class EvolutionMediaService {
       () => execution.abort('request_timeout'),
       execution.remainingMs,
     );
+    const onProviderStarted = execution.onProviderStarted;
+    execution.onProviderStarted = () => {
+      clearTimeout(timer);
+      onProviderStarted?.();
+    };
     let prepared: PreparedMedia | undefined;
     let statusCode = 201;
     try {
       prepared = await this.preparation.prepare(payload, field, execution);
-      return await this.http.requestMedia<MessageResponseDto>(
+      const result = await this.http.requestMedia<MessageResponseDto>(
         ctx.providerUrl,
         ctx.providerApiKey,
         `/message/${field === 'sticker' ? 'sendSticker' : 'sendMedia'}/${instanceName}`,
@@ -60,6 +65,8 @@ export class EvolutionMediaService {
         execution,
         prepared,
       );
+      statusCode = execution.upstreamStatusCode ?? 201;
+      return result;
     } catch (error) {
       statusCode = error instanceof HttpException ? error.getStatus() : 500;
       throw error;
@@ -83,7 +90,9 @@ export class EvolutionMediaService {
                 ? payload.mediatype
                 : 'media',
           durationMs: Math.round(execution.elapsedMs),
-          timeoutMs: execution.timeoutMs,
+          timeoutMs: execution.providerStarted
+            ? execution.callTimeoutMs
+            : execution.timeoutMs,
           ...execution.diagnostics(),
           upstreamStatusCode: execution.upstreamStatusCode,
           statusCode,

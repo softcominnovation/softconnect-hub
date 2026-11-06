@@ -6,6 +6,7 @@ export interface ProviderContext {
   providerApiKey: string;
   execution?: QrRequestContext;
   mediaExecution?: MediaRequestContext;
+  sendExecution?: import('../common/send-request-context').SendRequestContext;
   strictInventory?: boolean;
 }
 
@@ -334,7 +335,7 @@ export interface WhatsAppProvider {
     ctx: ProviderContext,
     instanceName: string,
     dto: SendPresenceDto,
-  ): Promise<void>;
+  ): Promise<unknown>;
 
   findChats(
     ctx: ProviderContext,

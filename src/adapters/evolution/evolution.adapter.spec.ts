@@ -7,6 +7,7 @@ import { QrRequestContext } from '../../common/qr-request-context';
 function makeHttp(): jest.Mocked<EvolutionHttpService> {
   return {
     request: jest.fn(),
+    requestSend: jest.fn(),
     createOptionalBudget: jest.fn(),
     tryOptionalRequest: jest.fn(),
     waitOptional: jest.fn(),
@@ -244,16 +245,16 @@ describe('EvolutionAdapter', () => {
 
     it('sendText — delegates to POST /message/sendText/:instance', async () => {
       const dto = { number: '5511999998888', text: 'Olá!' };
-      http.request.mockResolvedValue(msgResponse);
+      http.requestSend.mockResolvedValue(msgResponse);
 
       const result = await adapter.sendText(CTX, INSTANCE, dto);
 
-      expect(http.request).toHaveBeenCalledWith(
-        'post',
+      expect(http.requestSend).toHaveBeenCalledWith(
         CTX.providerUrl,
         CTX.providerApiKey,
         `/message/sendText/${INSTANCE}`,
         dto,
+        undefined,
       );
       expect(result).toBe(msgResponse);
     });
@@ -303,16 +304,18 @@ describe('EvolutionAdapter', () => {
 
     it('sendPresence — delegates to POST /chat/sendPresence/:instance', async () => {
       const dto = { number: '5511999998888', presence: 'composing' as const };
-      http.request.mockResolvedValue(undefined);
+      http.requestSend.mockResolvedValue({ presence: 'composing' });
 
-      await adapter.sendPresence(CTX, INSTANCE, dto);
+      await expect(adapter.sendPresence(CTX, INSTANCE, dto)).resolves.toEqual({
+        presence: 'composing',
+      });
 
-      expect(http.request).toHaveBeenCalledWith(
-        'post',
+      expect(http.requestSend).toHaveBeenCalledWith(
         CTX.providerUrl,
         CTX.providerApiKey,
         `/chat/sendPresence/${INSTANCE}`,
         dto,
+        undefined,
       );
     });
   });

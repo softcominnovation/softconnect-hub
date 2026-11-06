@@ -64,6 +64,10 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
         res.writeHead(200, { 'Content-Encoding': 'gzip' });
         res.end('not gzip');
         return;
+      } else if (req.url === '/html') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
+        res.end('<html><button>Download</button></html>');
+        return;
       } else if (req.url === '/single-use') {
         if (requests.filter((r) => r.url === '/single-use').length > 1) {
           res.writeHead(403);
@@ -180,7 +184,8 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
       service.prepare({ media: `${origin}/file` }, 'media', execution),
     ).rejects.toMatchObject({
       status: 502,
-      message: 'Unable to prepare media',
+      message:
+        'Não foi possível resolver o endereço do servidor do arquivo (DNS). O envio à Evolution não foi iniciado.',
     });
     expect(execution.diagnostics()).toMatchObject({
       sourceStage: 'resolve',
@@ -194,7 +199,12 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
     const execution = context();
     await expect(
       service.prepare({ media: `${origin}/reset` }, 'media', execution),
-    ).rejects.toMatchObject({ status: 502 });
+    ).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringContaining(
+        'conexão com o servidor do arquivo foi interrompida',
+      ) as unknown,
+    });
     expect(execution.diagnostics()).toMatchObject({
       sourceStage: 'request',
       sourceErrorCode: 'ECONNRESET',
@@ -206,13 +216,78 @@ describe('Media source streaming HTTP (isolated loopback fixture)', () => {
     const execution = context();
     await expect(
       service.prepare({ media: `${origin}/bad-gzip` }, 'media', execution),
-    ).rejects.toMatchObject({ status: 502 });
+    ).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringContaining('não pôde ser descompactado') as unknown,
+    });
     expect(execution.diagnostics()).toMatchObject({
       sourceStage: 'decode',
       sourceStatusCode: 200,
       sourceErrorCode: 'Z_DATA_ERROR',
     });
   });
+
+  it.each(['image', 'video', 'document'])(
+    'rejects an HTML download page for %s with a clear error',
+    async (mediatype) => {
+      const execution = context();
+      await expect(
+        service.prepare(
+          { media: `${origin}/html`, mediatype, fileName: 'arquivo.pdf' },
+          'media',
+          execution,
+        ),
+      ).rejects.toMatchObject({
+        status: 502,
+        message: expect.stringContaining(
+          'página HTML em vez da mídia',
+        ) as unknown,
+      });
+      expect(execution.diagnostics()).toMatchObject({
+        sourceStatusCode: 200,
+        sourceErrorCode: 'HTML_PAGE',
+        calls: 0,
+      });
+      expect(
+        (await readdir(root, { recursive: true })).filter((name) =>
+          name.endsWith('.bin'),
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it('allows explicitly requested HTML documents', async () => {
+    const prepared = await service.prepare(
+      {
+        media: `${origin}/html`,
+        mediatype: 'document',
+        fileName: 'pagina.html',
+      },
+      'media',
+      context(),
+    );
+    await prepared.dispose();
+  });
+
+  it.each(['CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID'])(
+    'explains TLS failure %s without exposing native exception details',
+    async (code) => {
+      jest
+        .spyOn(policy, 'resolve')
+        .mockRejectedValueOnce(
+          Object.assign(new Error('secret URL'), { code }),
+        );
+      const execution = context();
+      await expect(
+        service.prepare({ media: `${origin}/file` }, 'media', execution),
+      ).rejects.toMatchObject({
+        status: 502,
+        message:
+          'Falha ao estabelecer ou validar a conexão segura (TLS) com o servidor do arquivo. O envio à Evolution não foi iniciado.',
+      });
+      expect(execution.diagnostics()).toMatchObject({ sourceErrorCode: code });
+    },
+  );
 
   it.each(['media', 'sticker'] as const)(
     'sends the validated %s bytes over real HTTP as a JSON stream accepted by the synthetic provider',

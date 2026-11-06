@@ -175,21 +175,27 @@ describe('TimeoutInterceptor — media lifecycle', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  it('cleans a detached observation at the original total deadline', async () => {
+  it('leaves the detached provider deadline to the transport rather than the outer request timer', async () => {
     const { request, reply, context } = fixture();
+    let complete!: (value: unknown) => void;
     const result = firstValueFrom(
       interceptor.intercept(context, {
         handle: () =>
           defer(() => {
-            request.mediaExecution!.startProviderCall();
-            return new Promise(() => undefined);
+            request.mediaExecution!.startProviderCall(true);
+            return new Promise((resolve) => {
+              complete = resolve;
+            });
           }),
       }),
     ).catch((error: unknown) => error);
     reply.raw.emit('close');
     await result;
-    await jest.advanceTimersByTimeAsync(900000);
-    expect(request.mediaExecution?.reason).toBe('request_timeout');
+    await jest.advanceTimersByTimeAsync(86400000);
+    expect(request.mediaExecution?.reason).toBeUndefined();
+    expect(errorLog).not.toHaveBeenCalled();
+    complete({ delivered: 'provider-result' });
+    await jest.advanceTimersByTimeAsync(1);
     expect(errorLog).toHaveBeenCalledTimes(1);
     expect(jest.getTimerCount()).toBe(0);
   });

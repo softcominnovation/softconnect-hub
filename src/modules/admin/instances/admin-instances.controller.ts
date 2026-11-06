@@ -1,4 +1,9 @@
 import {
+  SendExecution,
+  ProviderResponse,
+} from '../../../common/decorators/provider-response.decorator';
+import type { SendRequestContext } from '../../../common/send-request-context';
+import {
   Body,
   Controller,
   Delete,
@@ -233,6 +238,7 @@ export class AdminInstancesController {
   }
 
   @Post(':instanceId/sendText')
+  @ProviderResponse()
   @ApiOperation({ summary: 'Enviar mensagem de texto pela instância' })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
@@ -246,11 +252,21 @@ export class AdminInstancesController {
     @Param('productId') productId: string,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendTextDto,
+    @SendExecution() execution?: SendRequestContext,
   ) {
-    return this.service.sendText(productId, instanceId, dto);
+    return this.service.sendText(productId, instanceId, dto, execution);
   }
 
   @Post(':instanceId/sendPresence')
+  @ProviderResponse()
+  @ApiResponse({
+    status: 200,
+    description: 'Status e corpo retornados pelo provider',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Status e corpo retornados pelo provider',
+  })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Enviar presença (digitando, gravando...)' })
   @ApiParam({ name: 'productId', description: 'UUID do produto' })
@@ -265,8 +281,9 @@ export class AdminInstancesController {
     @Param('productId') productId: string,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendPresenceDto,
+    @SendExecution() execution?: SendRequestContext,
   ) {
-    return this.service.sendPresence(productId, instanceId, dto);
+    return this.service.sendPresence(productId, instanceId, dto, execution);
   }
 
   @Post('import')

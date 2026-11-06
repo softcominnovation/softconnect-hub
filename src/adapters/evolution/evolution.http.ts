@@ -4,6 +4,7 @@ import { Optional } from '@nestjs/common';
 import { MaintenanceGuard } from '../../modules/maintenance/maintenance.guard';
 import { withoutRelayToken } from '../../modules/webhook/relay-configuration';
 import {
+  BadGatewayException,
   HttpException,
   Injectable,
   Logger,
@@ -21,10 +22,10 @@ import {
   QrOperation,
 } from '../../common/qr-request-context';
 import type { OptionalCallFailure } from '../../providers/whatsapp-provider.interface';
-import {
-  MediaRequestContext,
-  MediaTimeoutException,
-} from '../../common/media-request-context';
+import { MediaRequestContext } from '../../common/media-request-context';
+import { SendRequestContext } from '../../common/send-request-context';
+import { ProviderResponseException } from '../../common/provider-response.exception';
+import { SEND_PROVIDER_TIMEOUT_DEFAULT_MS } from '../../common/send-safety-timeout';
 
 export interface QrHttpOptions {
   execution: QrRequestContext;
@@ -327,6 +328,56 @@ export class EvolutionHttpService {
     throw lastError ?? new Error('Unknown error');
   }
 
+  async requestSend<T>(
+    vpsUrl: string,
+    apiKey: string,
+    path: string,
+    data: unknown,
+    context?: SendRequestContext,
+  ): Promise<T> {
+    const execution = context ?? new SendRequestContext();
+    let statusCode = 201;
+    try {
+      // A single dispatch. Only an actual response or transport failure settles it.
+      const result = await this.requestMedia<T>(
+        vpsUrl,
+        apiKey,
+        path,
+        data,
+        execution,
+      );
+      statusCode = execution.upstreamStatusCode ?? 201;
+      return result;
+    } catch (error) {
+      const failure =
+        error instanceof HttpException
+          ? error
+          : new BadGatewayException(
+              'A comunicação com a Evolution falhou sem confirmação do resultado. A mensagem pode ter sido enviada; não foi possível confirmar a entrega.',
+            );
+      statusCode = failure.getStatus();
+      throw failure;
+    } finally {
+      // HTTP requests are logged once by the interceptor; batch/internal calls here.
+      if (!context) {
+        const entry = JSON.stringify({
+          event: 'send_request_finished',
+          route: 'batch/internal',
+          level: statusCode >= 400 ? 'ERROR' : 'INFO',
+          durationMs: Math.round(execution.elapsedMs),
+          timeoutMs: execution.callTimeoutMs ?? 0,
+          ...execution.diagnostics(),
+          statusCode,
+          upstreamStatusCode: execution.upstreamStatusCode,
+          source:
+            execution.reason ?? execution.failureSource ?? 'upstream_success',
+        });
+        if (statusCode >= 400) this.logger.error(entry);
+        else this.logger.log(entry);
+      }
+    }
+  }
+
   async requestMedia<T>(
     vpsUrl: string,
     apiKey: string,
@@ -336,21 +387,15 @@ export class EvolutionHttpService {
     prepared?: PreparedMedia,
   ): Promise<T> {
     execution.assertActive();
-    try {
-      this.checkCircuit(vpsUrl);
-    } catch (error) {
-      execution.failureSource = 'circuit_open';
-      throw error;
-    }
+    // Sending must reach the provider even if the legacy circuit is open.
     const body = prepared?.body(data as Record<string, unknown>);
     const startedAt = performance.now();
-    const timeoutMs = execution.startProviderCall();
-    const deadlineAt = performance.now() + timeoutMs;
-    const reason =
-      timeoutMs < execution.providerTimeoutMs
-        ? 'request_timeout'
-        : 'provider_timeout';
-    const timer = setTimeout(() => execution.abort(reason), timeoutMs);
+    execution.startProviderCall(true);
+    const safetyMs =
+      this.config.get('SEND_PROVIDER_TIMEOUT_MS', { infer: true }) ??
+      SEND_PROVIDER_TIMEOUT_DEFAULT_MS;
+    execution.callTimeoutMs = safetyMs;
+    const timer = setTimeout(() => execution.abort('safety_timeout'), safetyMs);
     try {
       const response = await this.client.request<T>({
         method: 'post',
@@ -358,40 +403,31 @@ export class EvolutionHttpService {
         headers: { apikey: apiKey, ...body?.headers },
         data: body?.stream ?? data,
         ...(body ? { maxRedirects: 0, maxBodyLength: Infinity } : {}),
-        timeout: timeoutMs,
+        timeout: 0,
         signal: execution.signal,
       });
-      if (performance.now() >= deadlineAt) execution.abort(reason);
-      execution.assertActive();
-      execution.upstreamStatusCode = response.status;
+      clearTimeout(timer);
+      execution.confirmProviderResponse(response.status);
       this.recordSuccess(vpsUrl);
       return response.data;
     } catch (error) {
-      if (
-        performance.now() >= deadlineAt ||
-        (axios.isAxiosError(error) &&
-          !error.response &&
-          (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'))
-      )
-        execution.abort(reason);
-      if (execution.reason) {
-        if (execution.reason === 'provider_timeout') this.recordFailure(vpsUrl);
-        throw new MediaTimeoutException(execution.reason);
-      }
       if (axios.isAxiosError(error) && error.response) {
         execution.failureSource = 'upstream_http';
-        execution.upstreamStatusCode = error.response.status;
-        throw new HttpException(
+        execution.confirmProviderResponse(error.response.status);
+        throw new ProviderResponseException(
           withoutRelayToken(error.response.data) as Record<string, unknown>,
           error.response.status,
         );
       }
+      if (execution.reason) throw execution.timeoutException(execution.reason);
       execution.failureSource = 'transport_error';
       this.recordFailure(vpsUrl);
-      throw error;
+      throw new BadGatewayException(
+        'A conexão com a Evolution foi interrompida ou não pôde ser estabelecida, sem resposta do provider. O resultado da operação não foi confirmado; isso não confirma falha na entrega.',
+      );
     } finally {
-      execution.providerMs = Math.round(performance.now() - startedAt);
       clearTimeout(timer);
+      execution.providerMs = Math.round(performance.now() - startedAt);
     }
   }
 

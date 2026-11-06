@@ -15,6 +15,7 @@ import type {
 import { BatchProducer } from '../queue/batch.producer';
 import { InstanceResolverService } from '../../resolver/instance.resolver';
 import type { MediaRequestContext } from '../../common/media-request-context';
+import type { SendRequestContext } from '../../common/send-request-context';
 import type {
   SendBatchDocumentDto,
   SendBatchDto,
@@ -66,12 +67,15 @@ export class MessageService {
     product: AuthCachePayload,
     instanceId: string,
     dto: SendTextDto,
+    execution?: SendRequestContext,
   ): Promise<MessageResponseDto> {
     const { ctx, adapterType, instanceName } = await this.ctx(
       product,
       instanceId,
     );
     const adapter = this.adapterResolver.resolve(adapterType);
+    execution?.assertActive();
+    if (execution) ctx.sendExecution = execution;
     return adapter.sendText(ctx, instanceName, dto);
   }
 
@@ -100,12 +104,15 @@ export class MessageService {
     product: AuthCachePayload,
     instanceId: string,
     dto: SendListDto,
+    execution?: SendRequestContext,
   ): Promise<MessageResponseDto> {
     const { ctx, adapterType, instanceName } = await this.ctx(
       product,
       instanceId,
     );
     const adapter = this.adapterResolver.resolve(adapterType);
+    execution?.assertActive();
+    if (execution) ctx.sendExecution = execution;
     return adapter.sendList(ctx, instanceName, dto);
   }
 
@@ -155,12 +162,15 @@ export class MessageService {
     product: AuthCachePayload,
     instanceId: string,
     dto: SendPresenceDto,
-  ): Promise<void> {
+    execution?: SendRequestContext,
+  ): Promise<unknown> {
     const { ctx, adapterType, instanceName } = await this.ctx(
       product,
       instanceId,
     );
     const adapter = this.adapterResolver.resolve(adapterType);
+    execution?.assertActive();
+    if (execution) ctx.sendExecution = execution;
     return adapter.sendPresence(ctx, instanceName, dto);
   }
 

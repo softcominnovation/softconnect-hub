@@ -40,6 +40,12 @@ import {
   MessageController,
 } from './message.controller';
 import { MessageService } from './message.service';
+import { SEND_RESPONSE_PROFILE } from '../../common/decorators/provider-response.decorator';
+import { AdminInstancesController } from '../admin/instances/admin-instances.controller';
+import { AdminInstancesService } from '../admin/instances/admin-instances.service';
+import { InstanceService } from '../instance/instance.service';
+import { JwtGuard } from '../../auth/jwt.guard';
+import { SEND_SAFETY_TIMEOUT_MESSAGE } from '../../common/send-safety-timeout';
 
 // Only loopback HTTP is real; no AppModule, database, Redis or external provider.
 describe('Media timeouts — HTTP contract', () => {
@@ -132,6 +138,10 @@ describe('Media timeouts — HTTP contract', () => {
         >;
         received.push({ path: request.url ?? '', body });
         receivedSignal?.();
+        if (body.fixtureDisconnect) {
+          request.socket.destroy();
+          return;
+        }
         const timer = setTimeout(
           () => {
             timers.delete(timer);
@@ -140,7 +150,10 @@ describe('Media timeouts — HTTP contract', () => {
             reply.writeHead(status, { 'content-type': 'application/json' });
             reply.end(
               JSON.stringify(
-                status >= 400 ? { error: 'fixture-provider-error' } : response,
+                body.fixtureBody ??
+                  (status >= 400
+                    ? { error: 'fixture-provider-error' }
+                    : response),
               ),
             );
           },
@@ -154,9 +167,15 @@ describe('Media timeouts — HTTP contract', () => {
     );
     const providerUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     const module = await Test.createTestingModule({
-      controllers: [MessageController, MessageBatchController],
+      controllers: [
+        MessageController,
+        MessageBatchController,
+        AdminInstancesController,
+      ],
       providers: [
         MessageService,
+        AdminInstancesService,
+        { provide: InstanceService, useValue: {} },
         EvolutionAdapter,
         EvolutionMediaService,
         MediaPreparationService,
@@ -168,6 +187,11 @@ describe('Media timeouts — HTTP contract', () => {
         {
           provide: PrismaService,
           useValue: {
+            product: {
+              findUnique: jest
+                .fn()
+                .mockResolvedValue({ id: 'fixture-product', isActive: true }),
+            },
             batchJob: {
               create: jest.fn().mockResolvedValue({ id: 'fixture-batch-id' }),
             },
@@ -218,6 +242,8 @@ describe('Media timeouts — HTTP contract', () => {
         },
       })
       .overrideGuard(RateLimitGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(JwtGuard)
       .useValue({ canActivate: () => true })
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(
@@ -312,12 +338,14 @@ describe('Media timeouts — HTTP contract', () => {
     },
   );
 
-  function post(route: string, body: Record<string, unknown>) {
+  function post(route: string, body: Record<string, unknown>, admin = false) {
     let request!: ClientRequest;
     const result = new Promise<{ status: number; body: unknown }>(
       (resolve, reject) => {
         request = httpRequest(
-          `${hubUrl}/api/v1/message/${route}/fixture-hub-id`,
+          admin
+            ? `${hubUrl}/api/v1/admin/products/fixture-product/instances/fixture-hub-id/${route}`
+            : `${hubUrl}/api/v1/message/${route}/fixture-hub-id`,
           {
             method: 'POST',
             headers: {
@@ -333,7 +361,9 @@ describe('Media timeouts — HTTP contract', () => {
               try {
                 resolve({
                   status: reply.statusCode ?? 0,
-                  body: JSON.parse(Buffer.concat(chunks).toString()) as unknown,
+                  body: chunks.length
+                    ? (JSON.parse(Buffer.concat(chunks).toString()) as unknown)
+                    : null,
                 });
               } catch (error) {
                 reject(
@@ -400,30 +430,35 @@ describe('Media timeouts — HTTP contract', () => {
     );
   });
 
-  it('retains the existing 408 envelope when the media provider budget really expires', async () => {
-    values.MEDIA_PROVIDER_TIMEOUT_MS = 40;
-    expect(
-      await post('sendMedia', {
-        media: Buffer.from('fixture').toString('base64'),
-        fixtureDelayMs: 300,
-      }).result,
-    ).toEqual({
-      status: 408,
-      body: {
-        statusCode: 408,
-        error: 'REQUEST_TIMEOUT',
-        message: 'Request timeout',
-      },
-    });
-    expect(errorLog).toHaveBeenCalledWith(
-      expect.stringContaining('"source":"provider_timeout"'),
-    );
-  });
+  it.each(['sendMedia', 'sendDocument', 'sendSticker'])(
+    'waits beyond the configured provider timeout on %s',
+    async (route) => {
+      values.MEDIA_PROVIDER_TIMEOUT_MS = 40;
+      expect(
+        await post(route, {
+          media: 'YQ==',
+          sticker: 'YQ==',
+          fixtureDelayMs: 300,
+        }).result,
+      ).toEqual({ status: 201, body: response });
+      expect(received).toHaveLength(1);
+    },
+  );
 
-  it('keeps text and batch metadata on the original policy', async () => {
+  it('waits for text beyond the legacy timeout and keeps batch enqueue metadata', async () => {
+    for (const handler of [
+      MessageController.prototype.sendText,
+      AdminInstancesController.prototype.sendText,
+    ]) {
+      expect(Reflect.getMetadata(SEND_RESPONSE_PROFILE, handler)).toBe(true);
+    }
     expect(
       await post('sendText', { text: 'fixture', fixtureDelayMs: 300 }).result,
-    ).toMatchObject({ status: 408 });
+    ).toEqual({ status: 201, body: response });
+    expect(received).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('send_request_finished'),
+    );
     expect(
       Reflect.getMetadata(
         MEDIA_TIMEOUT_PROFILE,
@@ -442,6 +477,234 @@ describe('Media timeouts — HTTP contract', () => {
         MessageBatchController.prototype.sendBatchDocument,
       ),
     ).toBeUndefined();
+  });
+
+  it('waits more than 15 real seconds for the text provider without changing its response', async () => {
+    expect(
+      await post('sendText', { text: 'fixture', fixtureDelayMs: 16000 }).result,
+    ).toEqual({ status: 201, body: response });
+    expect(received).toHaveLength(1);
+  }, 22000);
+
+  it.each(['sendText', 'sendPresence'])(
+    'waits for the real provider status and body through Admin %s',
+    async (route) => {
+      expect(
+        await post(
+          route,
+          { text: 'fixture', fixtureDelayMs: 200, fixtureStatus: 200 },
+          true,
+        ).result,
+      ).toEqual({ status: 200, body: response });
+      expect(received).toHaveLength(1);
+    },
+  );
+
+  it('preserves the body/status of text rejected by the provider', async () => {
+    expect(
+      await post('sendText', { text: 'fixture', fixtureStatus: 422 }).result,
+    ).toEqual({ status: 422, body: { error: 'fixture-provider-error' } });
+    expect(received).toHaveLength(1);
+  });
+
+  it('preserves an empty presence response when the provider itself returns 204', async () => {
+    expect(await post('sendPresence', { fixtureStatus: 204 }).result).toEqual({
+      status: 204,
+      body: null,
+    });
+  });
+
+  it.each(['sendText', 'sendMedia'])(
+    'cleans detached %s execution when the safety deadline expires',
+    async (route) => {
+      values.SEND_PROVIDER_TIMEOUT_MS = 100;
+      const dispatched = new Promise<void>((resolve) => {
+        receivedSignal = resolve;
+      });
+      const client = post(route, {
+        text: 'fixture',
+        media: 'YQ==',
+        fixtureDelayMs: 500,
+      });
+      const closed = client.result.catch(() => undefined);
+      await dispatched;
+      client.request.destroy();
+      await closed;
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      expect(received).toHaveLength(1);
+      expect(
+        (await readdir(root, { recursive: true })).filter((x) =>
+          x.endsWith('.bin'),
+        ),
+      ).toEqual([]);
+      const entries = errorLog.mock.calls
+        .map((call: unknown[]) => String(call[0]))
+        .filter((line) => line.includes('"source":"safety_timeout"'));
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toContain('"clientDisconnected":true');
+      expect(
+        await post(route, { text: 'fixture', media: 'YQ==' }).result,
+      ).toMatchObject({ status: 201 });
+    },
+  );
+
+  it.each([
+    'sendText',
+    'sendList',
+    'sendPresence',
+    'sendMedia',
+    'sendDocument',
+    'sendSticker',
+  ])(
+    'releases %s after its safety deadline with an explicit unconfirmed result',
+    async (route) => {
+      values.SEND_PROVIDER_TIMEOUT_MS = 60;
+      values.PROXY_MAX_RETRIES = 3;
+      expect(
+        await post(route, {
+          text: 'fixture',
+          media: 'YQ==',
+          sticker: 'YQ==',
+          fixtureDelayMs: 300,
+        }).result,
+      ).toEqual({
+        status: 504,
+        body: {
+          statusCode: 504,
+          error: 'GATEWAY_TIMEOUT',
+          message: SEND_SAFETY_TIMEOUT_MESSAGE,
+        },
+      });
+      expect(received).toHaveLength(1);
+      expect(errorLog).toHaveBeenCalledWith(
+        expect.stringContaining('"source":"safety_timeout"'),
+      );
+      expect(
+        (await readdir(root, { recursive: true })).filter((x) =>
+          x.endsWith('.bin'),
+        ),
+      ).toEqual([]);
+      expect(
+        await post(route, { text: 'fixture', media: 'YQ==', sticker: 'YQ==' })
+          .result,
+      ).toMatchObject({ status: 201 });
+      expect(received).toHaveLength(2);
+    },
+  );
+
+  it.each(['sendText', 'sendPresence'])(
+    'applies the same safety limit on Admin %s',
+    async (route) => {
+      values.SEND_PROVIDER_TIMEOUT_MS = 60;
+      expect(
+        await post(route, { text: 'fixture', fixtureDelayMs: 300 }, true)
+          .result,
+      ).toEqual({
+        status: 504,
+        body: {
+          statusCode: 504,
+          error: 'GATEWAY_TIMEOUT',
+          message: SEND_SAFETY_TIMEOUT_MESSAGE,
+        },
+      });
+    },
+  );
+
+  it('explains text connection loss without asserting failure to deliver', async () => {
+    values.PROXY_MAX_RETRIES = 3;
+    expect(
+      await post('sendText', { text: 'fixture', fixtureDisconnect: true })
+        .result,
+    ).toEqual({
+      status: 502,
+      body: {
+        statusCode: 502,
+        error: 'BAD_GATEWAY',
+        message:
+          'A conexão com a Evolution foi interrompida ou não pôde ser estabelecida, sem resposta do provider. O resultado da operação não foi confirmado; isso não confirma falha na entrega.',
+      },
+    });
+    expect(received).toHaveLength(1);
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining('"source":"transport_error"'),
+    );
+  });
+
+  it('does not dispatch text if the caller leaves during resolution', async () => {
+    resolverDelay = 150;
+    const resolving = new Promise<void>((resolve) => {
+      resolvingSignal = resolve;
+    });
+    const pending = post('sendText', { text: 'fixture' });
+    const closed = pending.result.catch(() => undefined);
+    await resolving;
+    pending.request.destroy();
+    await closed;
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    expect(received).toHaveLength(0);
+  });
+
+  it.each(['sendText', 'sendList', 'sendPresence'])(
+    'awaits delayed provider responses for %s',
+    async (route) => {
+      values.PROXY_MAX_RETRIES = 3;
+      resolverDelay = 150;
+      expect(
+        await post(route, {
+          text: 'fixture',
+          fixtureDelayMs: 300,
+          fixtureStatus: 200,
+        }).result,
+      ).toEqual({ status: 200, body: response });
+      expect(received).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    'sendText',
+    'sendList',
+    'sendPresence',
+    'sendMedia',
+    'sendDocument',
+    'sendSticker',
+  ])('passes the actual provider timeout unchanged for %s', async (route) => {
+    const providerError = {
+      statusCode: 408,
+      error: 'Evolution timeout',
+      message: 'Upstream timed out',
+      detail: 'preserved',
+    };
+    expect(
+      await post(route, {
+        media: 'YQ==',
+        sticker: 'YQ==',
+        fixtureDelayMs: 120,
+        fixtureStatus: 408,
+        fixtureBody: providerError,
+      }).result,
+    ).toEqual({ status: 408, body: providerError });
+    expect(received).toHaveLength(1);
+  });
+
+  it('observes the text provider after a caller disconnects and logs the outcome once', async () => {
+    const dispatched = new Promise<void>((resolve) => {
+      receivedSignal = resolve;
+    });
+    const pending = post('sendText', { text: 'fixture', fixtureDelayMs: 150 });
+    const closed = pending.result.catch(() => undefined);
+    await dispatched;
+    pending.request.destroy();
+    await closed;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(received).toHaveLength(1);
+    const entries = errorLog.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .filter((line) => line.includes('send_request_finished'));
+    expect(entries).toHaveLength(1);
+    expect(JSON.parse(entries[0])).toMatchObject({
+      statusCode: 499,
+      upstreamStatusCode: 201,
+    });
   });
 
   it('records the provider response even when the original HTTP consumer leaves', async () => {

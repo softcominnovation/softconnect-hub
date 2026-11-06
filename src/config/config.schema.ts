@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { maintenanceConfigShape } from '../modules/maintenance/maintenance.config';
 import { z } from 'zod';
+import { SEND_PROVIDER_TIMEOUT_DEFAULT_MS } from '../common/send-safety-timeout';
 import { QR_FINISH_MARGIN_MS } from '../common/qr-request-context';
 import {
   MEDIA_FINISH_MARGIN_MS,
@@ -32,6 +33,12 @@ export const configSchema = z
     ADMIN_JWT_EXPIRY: z.coerce.number().int().positive().default(86400),
     DEFAULT_RATE_LIMIT: z.coerce.number().int().positive().default(100),
     PROXY_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    SEND_PROVIDER_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(2147483647)
+      .default(SEND_PROVIDER_TIMEOUT_DEFAULT_MS),
     MEDIA_MAX_SIZE_MB: z.coerce
       .number()
       .int()

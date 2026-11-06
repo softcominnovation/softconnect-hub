@@ -1,3 +1,4 @@
+import type { SendRequestContext } from '../../../common/send-request-context';
 import {
   BadRequestException,
   BadGatewayException,
@@ -156,24 +157,31 @@ export class AdminInstancesService {
     productId: string,
     instanceId: string,
     dto: SendTextDto,
+    execution?: SendRequestContext,
   ): Promise<MessageResponseDto> {
     this.logger.log(
       `[admin:sendText] productId=${productId} instanceId=${instanceId} dto=${JSON.stringify(dto)}`,
     );
     const payload = await this.buildPayload(productId);
-    return this.messageService.sendText(payload, instanceId, dto);
+    return this.messageService.sendText(payload, instanceId, dto, execution);
   }
 
   async sendPresence(
     productId: string,
     instanceId: string,
     dto: SendPresenceDto,
-  ): Promise<void> {
+    execution?: SendRequestContext,
+  ): Promise<unknown> {
     this.logger.log(
       `[admin:sendPresence] productId=${productId} instanceId=${instanceId} dto=${JSON.stringify(dto)}`,
     );
     const payload = await this.buildPayload(productId);
-    return this.messageService.sendPresence(payload, instanceId, dto);
+    return this.messageService.sendPresence(
+      payload,
+      instanceId,
+      dto,
+      execution,
+    );
   }
 
   async listHubInstances(productId: string): Promise<HubInstanceDto[]> {

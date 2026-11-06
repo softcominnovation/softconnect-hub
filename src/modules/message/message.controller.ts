@@ -38,6 +38,11 @@ import {
   MediaTimeout,
 } from '../../common/decorators/media-timeout.decorator';
 import type { MediaRequestContext } from '../../common/media-request-context';
+import {
+  SendExecution,
+  ProviderResponse,
+} from '../../common/decorators/provider-response.decorator';
+import type { SendRequestContext } from '../../common/send-request-context';
 
 @ApiTags('Data Plane — Messages')
 @ApiSecurity('apikey')
@@ -47,6 +52,7 @@ export class MessageController {
   constructor(private readonly service: MessageService) {}
 
   @Post('sendText/:instanceId')
+  @ProviderResponse()
   @ApiOperation({ summary: 'Enviar mensagem de texto' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendTextDto })
@@ -55,8 +61,9 @@ export class MessageController {
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendTextDto,
+    @SendExecution() execution?: SendRequestContext,
   ) {
-    return this.service.sendText(product, instanceId, dto);
+    return this.service.sendText(product, instanceId, dto, execution);
   }
 
   @Post('sendMedia/:instanceId')
@@ -105,6 +112,7 @@ export class MessageController {
   }
 
   @Post('sendList/:instanceId')
+  @ProviderResponse()
   @ApiOperation({ summary: 'Enviar lista interativa' })
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendListDto })
@@ -113,11 +121,13 @@ export class MessageController {
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendListDto,
+    @SendExecution() execution?: SendRequestContext,
   ) {
-    return this.service.sendList(product, instanceId, dto);
+    return this.service.sendList(product, instanceId, dto, execution);
   }
 
   @Post('sendPresence/:instanceId')
+  @ProviderResponse()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Atualizar presença da instância (digitando, gravando…)',
@@ -125,12 +135,21 @@ export class MessageController {
   @ApiParam({ name: 'instanceId', description: 'UUID da instância no Hub' })
   @ApiBody({ type: SendPresenceDto })
   @ApiResponse({ status: 204, description: 'Presença atualizada' })
+  @ApiResponse({
+    status: 200,
+    description: 'Status e corpo retornados pelo provider',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Status e corpo retornados pelo provider',
+  })
   sendPresence(
     @Product() product: AuthCachePayload,
     @Param('instanceId') instanceId: string,
     @Body() dto: SendPresenceDto,
+    @SendExecution() execution?: SendRequestContext,
   ) {
-    return this.service.sendPresence(product, instanceId, dto);
+    return this.service.sendPresence(product, instanceId, dto, execution);
   }
 }
 

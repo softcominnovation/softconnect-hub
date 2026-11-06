@@ -31,12 +31,16 @@ import {
 import {
   MEDIA_TIMEOUT_DEFAULTS,
   MediaRequestContext,
-  MediaTimeoutException,
 } from '../media-request-context';
 import {
   MEDIA_ADMISSION,
   AdmittedMediaRequest,
 } from '../../modules/media/media-http-admission';
+import {
+  SEND_RESPONSE_PROFILE,
+  SendHttpRequest,
+} from '../decorators/provider-response.decorator';
+import { SendRequestContext } from '../send-request-context';
 
 @Injectable()
 export class TimeoutInterceptor implements NestInterceptor {
@@ -51,6 +55,10 @@ export class TimeoutInterceptor implements NestInterceptor {
   }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    if (
+      this.reflector.get<boolean>(SEND_RESPONSE_PROFILE, context.getHandler())
+    )
+      return this.interceptMedia(context, next, true);
     if (
       this.reflector.get<boolean>(MEDIA_TIMEOUT_PROFILE, context.getHandler())
     )
@@ -84,27 +92,34 @@ export class TimeoutInterceptor implements NestInterceptor {
   private interceptMedia(
     context: ExecutionContext,
     next: CallHandler,
+    text = false,
   ): Observable<unknown> {
     const request = context.switchToHttp().getRequest<MediaHttpRequest>();
     const reply = context.switchToHttp().getResponse<FastifyReply>();
-    const execution = new MediaRequestContext(
-      this.config.get<number>(
-        'MEDIA_REQUEST_TIMEOUT_MS',
-        MEDIA_TIMEOUT_DEFAULTS.request,
-      ),
-      this.config.get<number>(
-        'MEDIA_PROVIDER_TIMEOUT_MS',
-        MEDIA_TIMEOUT_DEFAULTS.provider,
-      ),
-      this.config.get<number>(
-        'MEDIA_DOWNLOAD_TIMEOUT_MS',
-        MEDIA_TIMEOUT_DEFAULTS.download,
-      ),
-    );
-    request.mediaExecution = execution;
-    execution.takeAdmission = (request as AdmittedMediaRequest)[
-      MEDIA_ADMISSION
-    ]?.take;
+    const execution = text
+      ? new SendRequestContext()
+      : new MediaRequestContext(
+          this.config.get<number>(
+            'MEDIA_REQUEST_TIMEOUT_MS',
+            MEDIA_TIMEOUT_DEFAULTS.request,
+          ),
+          this.config.get<number>(
+            'MEDIA_PROVIDER_TIMEOUT_MS',
+            MEDIA_TIMEOUT_DEFAULTS.provider,
+          ),
+          this.config.get<number>(
+            'MEDIA_DOWNLOAD_TIMEOUT_MS',
+            MEDIA_TIMEOUT_DEFAULTS.download,
+          ),
+        );
+    if (text)
+      (request as SendHttpRequest).sendExecution =
+        execution as SendRequestContext;
+    else request.mediaExecution = execution;
+    if (!text)
+      execution.takeAdmission = (request as AdmittedMediaRequest)[
+        MEDIA_ADMISSION
+      ]?.take;
 
     return new Observable((subscriber) => {
       let inner: Subscription | undefined;
@@ -121,12 +136,15 @@ export class TimeoutInterceptor implements NestInterceptor {
         const effectiveStatus = execution.clientDisconnected ? 499 : statusCode;
         const failed = effectiveStatus >= 400;
         const entry = JSON.stringify({
-          event: 'media_request_finished',
+          event: text ? 'send_request_finished' : 'media_request_finished',
           level: failed ? 'ERROR' : 'INFO',
           requestId: request.id,
           route: request.routeOptions?.url,
           durationMs: Math.round(execution.elapsedMs),
-          timeoutMs: execution.timeoutMs,
+          timeoutMs:
+            text || execution.providerStarted
+              ? (execution.callTimeoutMs ?? 0)
+              : execution.timeoutMs,
           ...execution.diagnostics(),
           statusCode: effectiveStatus,
           upstreamStatusCode: execution.upstreamStatusCode,
@@ -147,18 +165,22 @@ export class TimeoutInterceptor implements NestInterceptor {
       const abandon = () => {
         if (settled) return;
         execution.disconnect();
-        const error = new MediaTimeoutException('client_disconnected');
+        const error = execution.timeoutException('client_disconnected');
         if (!execution.providerStarted) fail(error);
         else subscriber.error(error);
       };
       const onClose = () => {
         if (!reply.raw.writableFinished) abandon();
       };
-      const timer = setTimeout(() => {
-        execution.abort('request_timeout');
-        fail(new MediaTimeoutException('request_timeout'));
-        inner?.unsubscribe();
-      }, execution.remainingMs);
+      const timer = Number.isFinite(execution.remainingMs)
+        ? setTimeout(() => {
+            if (execution.providerStarted && execution.waitForProvider) return;
+            execution.abort('request_timeout');
+            fail(execution.timeoutException('request_timeout'));
+            inner?.unsubscribe();
+          }, execution.remainingMs)
+        : undefined;
+      execution.onProviderStarted = () => clearTimeout(timer);
 
       request.raw.once('aborted', abandon);
       reply.raw.once('close', onClose);
@@ -170,6 +192,8 @@ export class TimeoutInterceptor implements NestInterceptor {
             if (settled) return;
             try {
               execution.assertActive();
+              if (execution.upstreamStatusCode !== undefined)
+                reply.code(execution.upstreamStatusCode);
               finish(reply.statusCode, 'upstream_success');
               subscriber.next(value);
               subscriber.complete();
@@ -194,7 +218,7 @@ export class TimeoutInterceptor implements NestInterceptor {
             finish(499, 'client_disconnected');
             inner?.unsubscribe();
           }
-          // After dispatch, observe the provider until its original deadline.
+          // After dispatch, observe the provider until the response or connection failure.
         }
       };
     });
