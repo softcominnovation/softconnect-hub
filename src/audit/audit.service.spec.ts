@@ -56,8 +56,8 @@ describe('AuditService', () => {
     jest.clearAllMocks();
   });
 
-  afterEach(() => {
-    service.onModuleDestroy();
+  afterEach(async () => {
+    await service.onModuleDestroy();
   });
 
   it('should add an entry to the buffer', () => {
@@ -120,8 +120,8 @@ describe('AuditService — backpressure / load shedding', () => {
     jest.clearAllMocks();
   });
 
-  afterEach(() => {
-    service.onModuleDestroy();
+  afterEach(async () => {
+    await service.onModuleDestroy();
   });
 
   it('should discard entries when buffer reaches maxBufferSize', () => {
@@ -182,5 +182,72 @@ describe('AuditService — backpressure / load shedding', () => {
       'Audit buffer normalizado — registros voltando a ser aceitos.',
     );
     expect(internals.buffer.length).toBe(1);
+  });
+});
+
+describe('AuditService — slow persistence', () => {
+  it('bounds queued plus in-flight entries and drains serially during shutdown', async () => {
+    const service = await buildModule({
+      AUDIT_FLUSH_BATCH_SIZE: 2,
+      AUDIT_BUFFER_MAX_SIZE: 5,
+    });
+    let release!: () => void;
+    mockPrisma.auditLog.createMany.mockReset().mockResolvedValue({ count: 2 });
+    mockPrisma.auditLog.createMany.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    for (let i = 0; i < 3000; i++)
+      service.log({ ...sampleEntry(), endpoint: `/${i}` });
+    const pending = service.flush();
+    expect(service.flush()).toBe(pending);
+    expect(mockPrisma.auditLog.createMany).toHaveBeenCalledTimes(1);
+    expect((service as unknown as ServiceInternals).buffer).toHaveLength(3);
+    let stopped = false;
+    const shutdown = service.onModuleDestroy().then(() => {
+      stopped = true;
+    });
+    service.log(sampleEntry());
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    release();
+    await shutdown;
+    expect(
+      mockPrisma.auditLog.createMany.mock.calls.map(
+        ([arg]: [{ data: AuditEntry[] }]) => arg.data.map((e) => e.endpoint),
+      ),
+    ).toEqual([['/0', '/1'], ['/2', '/3'], ['/4']]);
+  });
+
+  it('does not overlap timer flushes and resumes after a failed batch', async () => {
+    jest.useFakeTimers();
+    const service = await buildModule({ AUDIT_FLUSH_BATCH_SIZE: 1 });
+    let reject!: (error: Error) => void;
+    mockPrisma.auditLog.createMany.mockReset().mockResolvedValue({ count: 1 });
+    mockPrisma.auditLog.createMany.mockImplementationOnce(
+      () =>
+        new Promise<void>((_, fail) => {
+          reject = fail;
+        }),
+    );
+    service.onModuleInit();
+    try {
+      service.log(sampleEntry());
+      service.log(sampleEntry());
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(mockPrisma.auditLog.createMany).toHaveBeenCalledTimes(1);
+      const pending = service.flush();
+      reject(new Error('slow database failed'));
+      await pending;
+      expect(mockPrisma.auditLog.createMany).toHaveBeenCalledTimes(2);
+      service.log(sampleEntry());
+      await service.flush();
+      expect(mockPrisma.auditLog.createMany).toHaveBeenCalledTimes(3);
+    } finally {
+      await service.onModuleDestroy();
+      jest.useRealTimers();
+    }
   });
 });

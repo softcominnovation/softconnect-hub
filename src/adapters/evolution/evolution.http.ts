@@ -11,7 +11,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosError, AxiosInstance, AxiosResponse } from 'axios';
 import * as http from 'http';
 import * as https from 'https';
 import { AppConfig } from '../../config/config.schema';
@@ -50,6 +50,21 @@ interface CircuitBreaker {
   state: CircuitState;
   failureCount: number;
   openedAt: number | null;
+}
+
+// Axios >= 1.16 also attaches headers from aborted response streams. They
+// are not a completed provider response and must retain transport-error handling.
+function hasProviderResponse(
+  error: unknown,
+): error is AxiosError & { response: AxiosResponse } {
+  if (!axios.isAxiosError(error) || !error.response) return false;
+  const request = error.response.request as
+    | { res?: { complete?: boolean } }
+    | undefined;
+  return (
+    request?.res?.complete !== false &&
+    (!request?.res || error.response.data !== undefined)
+  );
 }
 
 @Injectable()
@@ -221,12 +236,12 @@ export class EvolutionHttpService {
         controller.signal.aborted ||
         performance.now() >= callDeadlineAt ||
         (axios.isAxiosError(error) &&
-          !error.response &&
+          !hasProviderResponse(error) &&
           (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'))
       ) {
         return { failure: 'timeout' };
       }
-      if (axios.isAxiosError(error) && error.response) {
+      if (hasProviderResponse(error)) {
         return { failure: 'upstream_http', status: error.response.status };
       }
       return { failure: 'transport_error' };
@@ -314,7 +329,7 @@ export class EvolutionHttpService {
         this.recordSuccess(vpsUrl);
         return response.data;
       } catch (err) {
-        if (axios.isAxiosError(err) && err.response) {
+        if (hasProviderResponse(err)) {
           throw new HttpException(
             withoutRelayToken(err.response.data) as Record<string, unknown>,
             err.response.status,
@@ -411,7 +426,7 @@ export class EvolutionHttpService {
       this.recordSuccess(vpsUrl);
       return response.data;
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response) {
+      if (hasProviderResponse(error)) {
         execution.failureSource = 'upstream_http';
         execution.confirmProviderResponse(error.response.status);
         throw new ProviderResponseException(
@@ -492,24 +507,26 @@ export class EvolutionHttpService {
         axios.isAxiosError(error)
       ) {
         const rejected =
-          !!error.response &&
+          hasProviderResponse(error) &&
           rejectedBeforeCreate(error.response.status, error.response.data);
         execution.createOutcome = {
           ...execution.createOutcome,
           result: rejected ? 'rejected' : 'unknown',
           code: rejected
             ? 'invalid_integration'
-            : error.response
+            : hasProviderResponse(error)
               ? 'upstream_unclassified'
               : 'transport_unknown',
-          ...(error.response ? { status: error.response.status } : {}),
+          ...(hasProviderResponse(error)
+            ? { status: error.response.status }
+            : {}),
           observedAt: new Date().toISOString(),
         };
       }
       if (
         !execution.signal.aborted &&
         axios.isAxiosError(error) &&
-        !error.response &&
+        !hasProviderResponse(error) &&
         (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT')
       ) {
         execution.abort(reason);
@@ -518,7 +535,7 @@ export class EvolutionHttpService {
         if (execution.reason === 'provider_timeout') this.recordFailure(vpsUrl);
         throw new QrTimeoutException(execution.reason);
       }
-      if (axios.isAxiosError(error) && error.response) {
+      if (hasProviderResponse(error)) {
         execution.failureSource = 'upstream_http';
         throw new HttpException(
           withoutRelayToken(error.response.data) as Record<string, unknown>,

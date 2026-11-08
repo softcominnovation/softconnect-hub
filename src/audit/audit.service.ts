@@ -27,6 +27,9 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
   private readonly flushIntervalMs: number;
   private readonly flushBatchSize: number;
   private readonly maxBufferSize: number;
+  private flushInProgress?: Promise<void>;
+  private inFlightEntries = 0;
+  private stopping = false;
 
   // Controle de estado — evita logar alerta repetidamente por episódio
   private isUnderPressure = false;
@@ -48,18 +51,20 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.flushTimer = setInterval(() => {
-      void this.flush();
+      if (!this.flushInProgress) void this.flush();
     }, this.flushIntervalMs);
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
     if (this.flushTimer) clearInterval(this.flushTimer);
-    void this.flush();
+    await this.flush();
   }
 
   log(entry: AuditEntry): void {
+    if (this.stopping) return;
     // ── BACKPRESSURE — load shedding ──────────────────────────────
-    if (this.buffer.length >= this.maxBufferSize) {
+    if (this.buffer.length + this.inFlightEntries >= this.maxBufferSize) {
       if (!this.isUnderPressure) {
         this.isUnderPressure = true;
         this.logger.warn(
@@ -80,14 +85,30 @@ export class AuditService implements OnModuleInit, OnModuleDestroy {
     // ─────────────────────────────────────────────────────────────
 
     this.buffer.push(entry);
-    if (this.buffer.length >= this.flushBatchSize) {
+    if (!this.flushInProgress && this.buffer.length >= this.flushBatchSize) {
       void this.flush();
     }
   }
 
-  async flush(): Promise<void> {
-    if (this.buffer.length === 0) return;
-    const entries = this.buffer.splice(0, this.buffer.length);
+  flush(): Promise<void> {
+    if (this.flushInProgress) return this.flushInProgress;
+    if (this.buffer.length === 0) return Promise.resolve();
+    this.flushInProgress = this.drain().finally(() => {
+      this.flushInProgress = undefined;
+    });
+    return this.flushInProgress;
+  }
+
+  private async drain(): Promise<void> {
+    while (this.buffer.length > 0) {
+      const entries = this.buffer.splice(0, Math.max(1, this.flushBatchSize));
+      this.inFlightEntries = entries.length;
+      await this.persist(entries);
+      this.inFlightEntries = 0;
+    }
+  }
+
+  private async persist(entries: AuditEntry[]): Promise<void> {
     try {
       await this.prisma.auditLog.createMany({
         data: entries.map((e) => ({

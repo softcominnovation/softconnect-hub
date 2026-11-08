@@ -51,6 +51,8 @@ const PROVIDER_HEALTH_DETAIL_TTL = 30;
 export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HealthCheckService.name);
   private cronTimer?: ReturnType<typeof setInterval>;
+  private runningChecks?: Promise<void>;
+  private stopping = false;
   private readonly consecutiveFailures = new Map<string, number>();
 
   constructor(
@@ -61,32 +63,43 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     this.cronTimer = setInterval(() => {
-      void this.runChecks();
+      if (this.runningChecks || this.stopping) return;
+      void this.runChecks().catch((error: unknown) => {
+        this.logger.error(
+          `Falha no ciclo de health: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     }, 60_000);
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
     if (this.cronTimer) clearInterval(this.cronTimer);
+    await this.runningChecks?.catch(() => undefined);
   }
 
-  async runChecks(): Promise<void> {
+  runChecks(): Promise<void> {
+    if (this.runningChecks) return this.runningChecks;
+    if (this.stopping) return Promise.resolve();
+    this.runningChecks = this.performChecks().finally(() => {
+      this.runningChecks = undefined;
+    });
+    return this.runningChecks;
+  }
+
+  private async performChecks(): Promise<void> {
     const providers = await this.prisma.vpsProvider.findMany({
       where: { isActive: true },
       include: { vps: true },
     });
 
-    await Promise.allSettled(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      providers.map((p) => this.checkProvider(p as any)),
-    );
+    await Promise.allSettled(providers.map((p) => this.checkProvider(p)));
 
     const vpsList = await this.prisma.vpsServer.findMany({
       where: { isActive: true, monitorUrl: { not: null } },
     });
 
-    await Promise.allSettled(
-      vpsList.map((vps) => this.collectVpsMetrics(vps)),
-    );
+    await Promise.allSettled(vpsList.map((vps) => this.collectVpsMetrics(vps)));
   }
 
   async checkProvider(
@@ -95,7 +108,10 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
     },
   ): Promise<void> {
     const encryptionKey = this.config.getOrThrow<string>('ENCRYPTION_KEY');
-    const providerApiKey = decryptAES256GCM(provider.providerApiKey, encryptionKey);
+    const providerApiKey = decryptAES256GCM(
+      provider.providerApiKey,
+      encryptionKey,
+    );
 
     const start = Date.now();
     let status = 'healthy';
@@ -121,8 +137,6 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
         errorMsg: errorMsg ?? null,
       },
     });
-
-
 
     if (status === 'unhealthy') {
       const failures = (this.consecutiveFailures.get(provider.id) ?? 0) + 1;
@@ -181,40 +195,51 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
     const results: VpsHealthStatus[] = [];
 
     for (const vps of vpsList) {
-      const providerEntries: ProviderHealthEntry[] = vps.providers.map((provider) => ({
-        providerId: provider.id,
-        label: provider.label,
-        adapterType: provider.adapterType,
-        providerUrl: provider.providerUrl,
-        isHealthy: provider.isHealthy,
-        lastHealthAt: provider.lastHealthAt,
-        lastCheck: provider.healthChecks[0]
-          ? {
-              status: provider.healthChecks[0].status,
-              responseMs: provider.healthChecks[0].responseMs,
-              errorMsg: provider.healthChecks[0].errorMsg,
-              checkedAt: provider.healthChecks[0].checkedAt,
-            }
-          : null,
-      }));
+      const providerEntries: ProviderHealthEntry[] = vps.providers.map(
+        (provider) => ({
+          providerId: provider.id,
+          label: provider.label,
+          adapterType: provider.adapterType,
+          providerUrl: provider.providerUrl,
+          isHealthy: provider.isHealthy,
+          lastHealthAt: provider.lastHealthAt,
+          lastCheck: provider.healthChecks[0]
+            ? {
+                status: provider.healthChecks[0].status,
+                responseMs: provider.healthChecks[0].responseMs,
+                errorMsg: provider.healthChecks[0].errorMsg,
+                checkedAt: provider.healthChecks[0].checkedAt,
+              }
+            : null,
+        }),
+      );
 
-      const vpsIsHealthy = providerEntries.length === 0
-        ? true
-        : providerEntries.every((p) => p.isHealthy);
+      const vpsIsHealthy =
+        providerEntries.length === 0
+          ? true
+          : providerEntries.every((p) => p.isHealthy);
 
       const allLastHealthAt = providerEntries
         .map((p) => p.lastHealthAt)
         .filter((d): d is Date => d !== null);
-      const vpsLastHealthAt = allLastHealthAt.length > 0
-        ? allLastHealthAt.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
-        : null;
+      const vpsLastHealthAt =
+        allLastHealthAt.length > 0
+          ? allLastHealthAt.sort(
+              (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+            )[0]
+          : null;
 
       const allLastChecks = providerEntries
         .map((p) => p.lastCheck)
         .filter((c): c is NonNullable<typeof c> => c !== null);
-      const vpsLastCheck = allLastChecks.length > 0
-        ? allLastChecks.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime())[0]
-        : null;
+      const vpsLastCheck =
+        allLastChecks.length > 0
+          ? allLastChecks.sort(
+              (a, b) =>
+                new Date(b.checkedAt).getTime() -
+                new Date(a.checkedAt).getTime(),
+            )[0]
+          : null;
 
       const entry: VpsHealthStatus = {
         vpsId: vps.id,
@@ -263,40 +288,50 @@ export class HealthCheckService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException(`VPS ${vpsId} nao encontrada`);
     }
 
-    const providerEntries: ProviderHealthEntry[] = vps.providers.map((provider) => ({
-      providerId: provider.id,
-      label: provider.label,
-      adapterType: provider.adapterType,
-      providerUrl: provider.providerUrl,
-      isHealthy: provider.isHealthy,
-      lastHealthAt: provider.lastHealthAt,
-      lastCheck: provider.healthChecks[0]
-        ? {
-            status: provider.healthChecks[0].status,
-            responseMs: provider.healthChecks[0].responseMs,
-            errorMsg: provider.healthChecks[0].errorMsg,
-            checkedAt: provider.healthChecks[0].checkedAt,
-          }
-        : null,
-    }));
+    const providerEntries: ProviderHealthEntry[] = vps.providers.map(
+      (provider) => ({
+        providerId: provider.id,
+        label: provider.label,
+        adapterType: provider.adapterType,
+        providerUrl: provider.providerUrl,
+        isHealthy: provider.isHealthy,
+        lastHealthAt: provider.lastHealthAt,
+        lastCheck: provider.healthChecks[0]
+          ? {
+              status: provider.healthChecks[0].status,
+              responseMs: provider.healthChecks[0].responseMs,
+              errorMsg: provider.healthChecks[0].errorMsg,
+              checkedAt: provider.healthChecks[0].checkedAt,
+            }
+          : null,
+      }),
+    );
 
-    const vpsIsHealthy = providerEntries.length === 0
-      ? true
-      : providerEntries.every((p) => p.isHealthy);
+    const vpsIsHealthy =
+      providerEntries.length === 0
+        ? true
+        : providerEntries.every((p) => p.isHealthy);
 
     const allLastHealthAt = providerEntries
       .map((p) => p.lastHealthAt)
       .filter((d): d is Date => d !== null);
-    const vpsLastHealthAt = allLastHealthAt.length > 0
-      ? allLastHealthAt.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
-      : null;
+    const vpsLastHealthAt =
+      allLastHealthAt.length > 0
+        ? allLastHealthAt.sort(
+            (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+          )[0]
+        : null;
 
     const allLastChecks = providerEntries
       .map((p) => p.lastCheck)
       .filter((c): c is NonNullable<typeof c> => c !== null);
-    const vpsLastCheck = allLastChecks.length > 0
-      ? allLastChecks.sort((a, b) => new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime())[0]
-      : null;
+    const vpsLastCheck =
+      allLastChecks.length > 0
+        ? allLastChecks.sort(
+            (a, b) =>
+              new Date(b.checkedAt).getTime() - new Date(a.checkedAt).getTime(),
+          )[0]
+        : null;
 
     const entry: VpsHealthStatus = {
       vpsId: vps.id,

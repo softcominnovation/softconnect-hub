@@ -92,8 +92,8 @@ describe('HealthCheckService', () => {
     jest.clearAllMocks();
   });
 
-  afterEach(() => {
-    service.onModuleDestroy();
+  afterEach(async () => {
+    await service.onModuleDestroy();
   });
 
   describe('checkProvider  healthy response', () => {
@@ -107,7 +107,10 @@ describe('HealthCheckService', () => {
       expect(mockPrisma.healthCheck.create).toHaveBeenCalledWith(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          data: expect.objectContaining({ vpsProviderId: 'provider-1', status: 'healthy' }),
+          data: expect.objectContaining({
+            vpsProviderId: 'provider-1',
+            status: 'healthy',
+          }),
         }),
       );
     });
@@ -243,5 +246,89 @@ describe('HealthCheckService', () => {
       expect(result).toHaveLength(1);
       expect(result[0].providers).toHaveLength(0);
     });
+  });
+});
+
+describe('HealthCheckService — cycle concurrency', () => {
+  let service: HealthCheckService;
+
+  beforeEach(async () => {
+    jest.useFakeTimers();
+    jest.resetAllMocks();
+    mockConfig.getOrThrow.mockReturnValue('a'.repeat(32));
+    mockPrisma.vpsProvider.findMany.mockResolvedValue([]);
+    mockPrisma.vpsServer.findMany.mockResolvedValue([]);
+    service = await buildService();
+  });
+
+  afterEach(async () => {
+    await service.onModuleDestroy();
+    jest.useRealTimers();
+  });
+
+  it('shares a slow cycle and skips intervals until both provider and VPS work finish', async () => {
+    let releaseProviders!: (value: unknown[]) => void;
+    let releaseVps!: (value: unknown[]) => void;
+    mockPrisma.vpsProvider.findMany.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseProviders = resolve;
+        }),
+    );
+    mockPrisma.vpsServer.findMany.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseVps = resolve;
+        }),
+    );
+    service.onModuleInit();
+    const cycle = service.runChecks();
+    expect(service.runChecks()).toBe(cycle);
+    await jest.advanceTimersByTimeAsync(180000);
+    expect(mockPrisma.vpsProvider.findMany).toHaveBeenCalledTimes(1);
+    releaseProviders([]);
+    await jest.advanceTimersByTimeAsync(180000);
+    expect(mockPrisma.vpsProvider.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.vpsServer.findMany).toHaveBeenCalledTimes(1);
+    releaseVps([]);
+    await cycle;
+    await jest.advanceTimersByTimeAsync(60000);
+    expect(mockPrisma.vpsProvider.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('handles scheduled failures and permits the next cycle', async () => {
+    mockPrisma.vpsProvider.findMany.mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+    service.onModuleInit();
+    await jest.advanceTimersByTimeAsync(60000);
+    expect(mockPrisma.vpsProvider.findMany).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(60000);
+    expect(mockPrisma.vpsProvider.findMany).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.vpsServer.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('awaits the active cycle on shutdown without starting more work', async () => {
+    let release!: (value: unknown[]) => void;
+    mockPrisma.vpsProvider.findMany.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    service.onModuleInit();
+    const cycle = service.runChecks();
+    let stopped = false;
+    const shutdown = service.onModuleDestroy().then(() => {
+      stopped = true;
+    });
+    await jest.advanceTimersByTimeAsync(180000);
+    expect(stopped).toBe(false);
+    release([]);
+    await cycle;
+    await shutdown;
+    await service.runChecks();
+    expect(mockPrisma.vpsProvider.findMany).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
