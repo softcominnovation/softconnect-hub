@@ -1,3 +1,8 @@
+import { BatchWebhookJobPayload } from './batch-webhook.worker';
+const notificationContaining = (
+  value: Partial<BatchWebhookJobPayload>,
+): BatchWebhookJobPayload =>
+  expect.objectContaining(value) as BatchWebhookJobPayload;
 import { createServer, Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
@@ -20,11 +25,11 @@ import {
 import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { CacheService } from '../../cache/cache.service';
-import { PrismaService } from '../../prisma/prisma.service';
 import { AdapterResolverService } from '../../providers/adapter-resolver.service';
 import { BatchWorker } from './batch.worker';
-import { BATCH_WEBHOOK_QUEUE } from './queue.constants';
+import { BatchResultService } from './batch-result.service';
+import { DelayedError } from 'bullmq';
+import { BatchJobPayload } from './batch.producer';
 
 jest.mock('bullmq', () => {
   const processorMap = new Map<string, (job: unknown) => Promise<unknown>>();
@@ -40,15 +45,17 @@ jest.mock('bullmq', () => {
         };
       },
     );
-  return { Queue: jest.fn(), Worker: WorkerMock };
+  return {
+    Queue: jest.fn(),
+    Worker: WorkerMock,
+    DelayedError: class extends Error {},
+  };
 });
 
 describe('BatchWorker', () => {
   let batchWorker: BatchWorker;
-  let prisma: jest.Mocked<Pick<PrismaService, 'batchJob'>>;
-  let cache: jest.Mocked<Pick<CacheService, 'increment' | 'get'>>;
   let adapterResolver: { resolve: jest.Mock };
-  let batchWebhookQueue: { add: jest.Mock; close: jest.Mock };
+  let results: { publish: jest.Mock };
 
   const mockAdapter = {
     sendText: jest.fn(),
@@ -73,18 +80,7 @@ describe('BatchWorker', () => {
   beforeEach(async () => {
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
-    batchWebhookQueue = { add: jest.fn(), close: jest.fn() };
-
-    prisma = {
-      batchJob: {
-        update: jest.fn(),
-      } as unknown as PrismaService['batchJob'],
-    };
-
-    cache = {
-      increment: jest.fn(),
-      get: jest.fn(),
-    };
+    results = { publish: jest.fn().mockResolvedValue(undefined) };
 
     adapterResolver = { resolve: jest.fn().mockReturnValue(mockAdapter) };
 
@@ -98,10 +94,8 @@ describe('BatchWorker', () => {
             get: jest.fn().mockReturnValue(10),
           },
         },
-        { provide: PrismaService, useValue: prisma },
-        { provide: CacheService, useValue: cache },
         { provide: AdapterResolverService, useValue: adapterResolver },
-        { provide: BATCH_WEBHOOK_QUEUE, useValue: batchWebhookQueue },
+        { provide: BatchResultService, useValue: results },
       ],
     }).compile();
 
@@ -118,8 +112,6 @@ describe('BatchWorker', () => {
     mockAdapter.sendDocument.mockResolvedValue({
       key: { id: 'msg-3', remoteJid: '5511@s.whatsapp.net', fromMe: true },
     });
-    (prisma.batchJob.update as jest.Mock).mockResolvedValue({});
-    batchWebhookQueue.add.mockResolvedValue({});
   });
 
   afterEach(async () => {
@@ -130,58 +122,173 @@ describe('BatchWorker', () => {
     const worker = batchWorker['worker'] as unknown as {
       __processorMap: Map<string, (job: unknown) => Promise<unknown>>;
     };
-    return worker.__processorMap.get('batch')!;
+    const process = worker.__processorMap.get('batch')!;
+    return (job: {
+      data: unknown;
+      id?: string;
+      updateData?: jest.Mock;
+      moveToDelayed?: jest.Mock;
+    }) =>
+      process({
+        id: 'message-job-1',
+        updateData: jest.fn().mockResolvedValue(undefined),
+        moveToDelayed: jest.fn().mockResolvedValue(undefined),
+        ...job,
+      });
   }
 
-  it('deve incrementar batch:sent quando sendText tem sucesso', async () => {
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
-
-    await getProcessor()({ data: basePayload });
-
-    expect(cache.increment).toHaveBeenCalledWith('batch:sent:job-1');
-  });
-
-  it('deve incrementar batch:failed e relançar erro quando sendText falha', async () => {
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
-    mockAdapter.sendText.mockRejectedValue(new Error('timeout'));
-
-    await expect(getProcessor()({ data: basePayload })).rejects.toThrow(
-      'timeout',
+  it('recovers a failed result handoff without sending a confirmed message again', async () => {
+    const updateData = jest.fn().mockResolvedValue(undefined);
+    const moveToDelayed = jest.fn().mockResolvedValue(undefined);
+    results.publish.mockRejectedValueOnce(new Error('Redis unavailable'));
+    await expect(
+      getProcessor()({ data: basePayload, updateData, moveToDelayed }),
+    ).rejects.toBeInstanceOf(DelayedError);
+    const saved = (updateData.mock.calls.at(-1) as [BatchJobPayload])[0];
+    expect(saved.batchExecution?.result).toMatchObject({
+      success: true,
+      deliveryError: null,
+    });
+    expect(moveToDelayed).toHaveBeenCalledTimes(1);
+    await getProcessor()({ data: saved });
+    expect(mockAdapter.sendText).toHaveBeenCalledTimes(1);
+    expect(mockAdapter.sendText).toHaveBeenCalledWith(
+      {
+        providerUrl: basePayload.providerUrl,
+        providerApiKey: basePayload.providerApiKey,
+      },
+      basePayload.instanceName,
+      basePayload.message,
     );
-
-    expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');
+    expect(results.publish.mock.calls[0]).toEqual(
+      results.publish.mock.calls[1],
+    );
   });
 
-  it('deve atualizar BatchJob no Postgres quando done === total', async () => {
-    cache.increment
-      .mockResolvedValueOnce(1) // batch:sent
-      .mockResolvedValueOnce(1); // batch:done
-    cache.get
-      .mockResolvedValueOnce(1) // batch:total → done(1) === total(1)
-      .mockResolvedValueOnce(1) // batch:sent
-      .mockResolvedValueOnce(0); // batch:failed
-
-    await getProcessor()({ data: basePayload });
-
-    expect(prisma.batchJob.update).toHaveBeenCalledWith(
+  it('preserves the provider error when internal registration is retried', async () => {
+    const error = new ProviderResponseException(
+      { message: 'Erro real do provider' },
+      422,
+    );
+    mockAdapter.sendText.mockRejectedValue(error);
+    results.publish.mockRejectedValueOnce(new Error('Redis unavailable'));
+    const updateData = jest.fn().mockResolvedValue(undefined);
+    await expect(
+      getProcessor()({
+        data: { ...basePayload, webhook: { url: 'https://callback.invalid' } },
+        updateData,
+      }),
+    ).rejects.toBeInstanceOf(DelayedError);
+    const saved = (updateData.mock.calls.at(-1) as [BatchJobPayload])[0];
+    await expect(getProcessor()({ data: saved })).rejects.toThrow(
+      'Erro real do provider',
+    );
+    expect(mockAdapter.sendText).toHaveBeenCalledTimes(1);
+    expect(results.publish).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        where: { id: 'job-1' },
-        data: expect.objectContaining({ status: 'completed' }) as {
-          status: string;
-        },
+        success: false,
+        deliveryError: 'Erro real do provider',
+        notification: notificationContaining({
+          success: false,
+          deliveryError: 'Erro real do provider',
+        }),
       }),
     );
   });
 
-  it('não deve atualizar o Postgres quando done < total', async () => {
-    cache.increment.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
-    cache.get.mockResolvedValueOnce(5);
+  it('does not dispatch if the initial execution checkpoint cannot be saved', async () => {
+    await expect(
+      getProcessor()({
+        data: basePayload,
+        updateData: jest.fn().mockRejectedValue(new Error('Redis down')),
+      }),
+    ).rejects.toThrow('Redis down');
+    expect(mockAdapter.sendText).not.toHaveBeenCalled();
+    expect(results.publish).not.toHaveBeenCalled();
+  });
 
-    await getProcessor()({ data: basePayload });
+  it('keeps the real success when saving the outcome checkpoint fails', async () => {
+    const updateData = jest
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(new Error('Redis down'));
+    await getProcessor()({ data: basePayload, updateData });
+    expect(mockAdapter.sendText).toHaveBeenCalledTimes(1);
+    expect(results.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, deliveryError: null }),
+    );
+  });
 
-    expect(prisma.batchJob.update).not.toHaveBeenCalled();
+  it('does not defer an unpersisted known outcome when Redis remains unavailable', async () => {
+    const updateData = jest
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(new Error('Redis down'));
+    const moveToDelayed = jest.fn();
+    results.publish.mockRejectedValue(new Error('Redis down'));
+    await expect(
+      getProcessor()({ data: basePayload, updateData, moveToDelayed }),
+    ).rejects.toThrow('Redis down');
+    expect(mockAdapter.sendText).toHaveBeenCalledTimes(1);
+    expect(results.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, deliveryError: null }),
+    );
+    expect(moveToDelayed).not.toHaveBeenCalled();
+  });
+
+  it('does not prematurely settle or resend a recovered execution inside its safety window', async () => {
+    const moveToDelayed = jest.fn().mockResolvedValue(undefined);
+    await expect(
+      getProcessor()({
+        data: {
+          ...basePayload,
+          batchExecution: { started: true, settleAfter: Date.now() + 600000 },
+        },
+        moveToDelayed,
+      }),
+    ).rejects.toBeInstanceOf(DelayedError);
+    expect(mockAdapter.sendText).not.toHaveBeenCalled();
+    expect(results.publish).not.toHaveBeenCalled();
+    expect(moveToDelayed).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an interrupted execution as unconfirmed without resending', async () => {
+    await expect(
+      getProcessor()({
+        data: {
+          ...basePayload,
+          batchExecution: { started: true, settleAfter: Date.now() - 1 },
+        },
+      }),
+    ).rejects.toThrow('Resultado do envio não confirmado');
+    expect(mockAdapter.sendText).not.toHaveBeenCalled();
+    expect(results.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        deliveryError: expect.stringContaining('não foi reenviada') as string,
+      }),
+    );
+  });
+
+  it('preserves jobs created before messageType and webhook overrides existed', async () => {
+    await getProcessor()({
+      data: {
+        ...basePayload,
+        messageType: undefined,
+        webhook: undefined,
+        batchWebhookEnabled: true,
+        batchWebhookUrl: 'https://legacy.invalid',
+      },
+    });
+    expect(mockAdapter.sendText).toHaveBeenCalledTimes(1);
+    expect(results.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notification: notificationContaining({
+          batchWebhookUrl: 'https://legacy.invalid',
+          success: true,
+        }),
+      }),
+    );
   });
 
   it('deve enfileirar webhook por mensagem com success=true quando webhook está definido', async () => {
@@ -193,25 +300,22 @@ describe('BatchWorker', () => {
       },
     };
 
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
-
     await getProcessor()({ data: payload });
 
-    expect(batchWebhookQueue.add).toHaveBeenCalledWith(
-      'notify',
+    expect(results.publish).toHaveBeenCalledWith(
       expect.objectContaining({
-        batchWebhookUrl: 'https://cliente.example.com/callback',
-        batchWebhookHeaders: { authorization: 'Bearer x' },
-        apiKeyHash: 'hash-abc',
-        batchJobId: 'job-1',
-        productId: 'prod-1',
-        instanceId: 'inst-1',
-        success: true,
-        deliveryError: null,
-        messagePayload: basePayload.message,
+        notification: notificationContaining({
+          batchWebhookUrl: 'https://cliente.example.com/callback',
+          batchWebhookHeaders: { authorization: 'Bearer x' },
+          apiKeyHash: 'hash-abc',
+          batchJobId: 'job-1',
+          productId: 'prod-1',
+          instanceId: 'inst-1',
+          success: true,
+          deliveryError: null,
+          messagePayload: basePayload.message,
+        }),
       }),
-      expect.objectContaining({ attempts: 3 }),
     );
   });
 
@@ -220,30 +324,26 @@ describe('BatchWorker', () => {
       ...basePayload,
       webhook: { url: 'https://cliente.example.com/callback' },
     };
-
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
     mockAdapter.sendText.mockRejectedValue(new Error('timeout'));
 
     await expect(getProcessor()({ data: payload })).rejects.toThrow('timeout');
 
-    expect(batchWebhookQueue.add).toHaveBeenCalledWith(
-      'notify',
+    expect(results.publish).toHaveBeenCalledWith(
       expect.objectContaining({
-        success: false,
-        deliveryError: 'timeout',
+        notification: notificationContaining({
+          success: false,
+          deliveryError: 'timeout',
+        }),
       }),
-      expect.any(Object),
     );
   });
 
   it('não deve enfileirar webhook quando webhook é null', async () => {
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
-
     await getProcessor()({ data: basePayload });
 
-    expect(batchWebhookQueue.add).not.toHaveBeenCalled();
+    expect(results.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ notification: null }),
+    );
   });
 
   it('deve chamar sendDocument quando messageType=document', async () => {
@@ -252,8 +352,6 @@ describe('BatchWorker', () => {
       media: 'https://example.com/file.pdf',
       fileName: 'file.pdf',
     };
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
 
     await getProcessor()({
       data: {
@@ -278,8 +376,6 @@ describe('BatchWorker', () => {
       mediatype: 'image' as const,
       media: 'https://example.com/img.jpg',
     };
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
 
     await getProcessor()({
       data: {
@@ -367,8 +463,6 @@ describe('BatchWorker', () => {
         adapterResolver.resolve.mockReturnValue(
           new EvolutionAdapter(http, media),
         );
-        cache.increment.mockResolvedValue(1);
-        cache.get.mockResolvedValue(null);
         const payload = {
           ...basePayload,
           messageType,
@@ -388,21 +482,25 @@ describe('BatchWorker', () => {
         const processing = getProcessor()({ data: payload }).catch(
           (error: unknown) => error,
         );
-        await received;
-        expect(cache.increment).not.toHaveBeenCalled();
-        expect(batchWebhookQueue.add).not.toHaveBeenCalled();
+        await Promise.race([
+          received,
+          processing.then((error: unknown) => {
+            throw error instanceof Error
+              ? error
+              : new Error('Batch finished before reaching the HTTP fixture');
+          }),
+        ]);
+        expect(results.publish).not.toHaveBeenCalled();
         await new Promise((resolve) => setTimeout(resolve, 120));
         if (expires) {
           expect(await processing).toBeInstanceOf(SendSafetyTimeoutException);
-          expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');
-          expect(cache.increment).not.toHaveBeenCalledWith('batch:sent:job-1');
-          expect(batchWebhookQueue.add).toHaveBeenCalledWith(
-            'notify',
+          expect(results.publish).toHaveBeenCalledWith(
             expect.objectContaining({
-              success: false,
-              deliveryError: SEND_SAFETY_TIMEOUT_MESSAGE,
+              notification: notificationContaining({
+                success: false,
+                deliveryError: SEND_SAFETY_TIMEOUT_MESSAGE,
+              }),
             }),
-            expect.any(Object),
           );
           expect(bodies).toHaveLength(1);
           expect(
@@ -412,8 +510,7 @@ describe('BatchWorker', () => {
           ).toEqual([]);
           return;
         }
-        expect(cache.increment).not.toHaveBeenCalled();
-        expect(batchWebhookQueue.add).not.toHaveBeenCalled();
+        expect(results.publish).not.toHaveBeenCalled();
         respond!();
         await processing;
         expect(bodies).toEqual([
@@ -424,15 +521,14 @@ describe('BatchWorker', () => {
             extra: true,
           }),
         ]);
-        expect(cache.increment).toHaveBeenCalledWith('batch:sent:job-1');
-        expect(batchWebhookQueue.add).toHaveBeenCalledWith(
-          'notify',
+        expect(results.publish).toHaveBeenCalledWith(
           expect.objectContaining({
-            success: true,
-            deliveryError: null,
-            messagePayload: payload.message,
+            notification: notificationContaining({
+              success: true,
+              deliveryError: null,
+              messagePayload: payload.message,
+            }),
           }),
-          expect.any(Object),
         );
         expect(
           (await readdir(root, { recursive: true })).filter((x) =>
@@ -451,8 +547,6 @@ describe('BatchWorker', () => {
   );
 
   it('keeps the callback contract while describing a media timeout as unconfirmed delivery', async () => {
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
     mockAdapter.sendMedia.mockRejectedValue(
       new MediaTimeoutException('provider_timeout'),
     );
@@ -465,21 +559,18 @@ describe('BatchWorker', () => {
         },
       }),
     ).rejects.toBeInstanceOf(MediaTimeoutException);
-    expect(batchWebhookQueue.add).toHaveBeenCalledWith(
-      'notify',
+    expect(results.publish).toHaveBeenCalledWith(
       expect.objectContaining({
-        success: false,
-        deliveryError:
-          'Media request timeout (provider_timeout); delivery not confirmed',
+        notification: notificationContaining({
+          success: false,
+          deliveryError:
+            'Media request timeout (provider_timeout); delivery not confirmed',
+        }),
       }),
-      expect.any(Object),
     );
-    expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');
   });
 
   it('keeps text timeout details in the existing batch callback envelope', async () => {
-    cache.increment.mockResolvedValue(1);
-    cache.get.mockResolvedValue(null);
     const error = new ProviderResponseException(
       { message: ['Timeout informado pela Evolution'] },
       408,
@@ -495,11 +586,13 @@ describe('BatchWorker', () => {
         },
       }),
     ).rejects.toBe(error);
-    expect(batchWebhookQueue.add).toHaveBeenCalledWith(
-      'notify',
-      expect.objectContaining({ success: false, deliveryError: error.message }),
-      expect.any(Object),
+    expect(results.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notification: notificationContaining({
+          success: false,
+          deliveryError: error.message,
+        }),
+      }),
     );
-    expect(cache.increment).toHaveBeenCalledWith('batch:failed:job-1');
   });
 });

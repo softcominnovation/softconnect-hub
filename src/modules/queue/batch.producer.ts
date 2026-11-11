@@ -11,6 +11,16 @@ export interface BatchMessageWebhook {
 }
 
 export interface BatchJobPayload {
+  /** Internal checkpoint; never part of the HTTP or callback contract. */
+  batchExecution?: {
+    started: boolean;
+    settleAfter?: number;
+    result?: {
+      success: boolean;
+      processedAt: string;
+      deliveryError: string | null;
+    };
+  };
   batchJobId: string;
   productId: string;
   apiKeyHash: string;
@@ -38,7 +48,11 @@ function stripWebhook(raw: unknown): {
   const { webhook: webhookRaw, ...rest } = record;
 
   let override: BatchMessageWebhook | null = null;
-  if (webhookRaw && typeof webhookRaw === 'object' && !Array.isArray(webhookRaw)) {
+  if (
+    webhookRaw &&
+    typeof webhookRaw === 'object' &&
+    !Array.isArray(webhookRaw)
+  ) {
     const wh = webhookRaw as Record<string, unknown>;
     const url = typeof wh.url === 'string' ? wh.url.trim() : '';
     if (url) {

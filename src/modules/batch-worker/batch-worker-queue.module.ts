@@ -7,11 +7,22 @@ import { ProviderModule } from '../../providers/provider.module';
 import { parseRedisConnection } from '../../common/redis.util';
 import { BatchWebhookWorker } from '../queue/batch-webhook.worker';
 import { BatchWorker } from '../queue/batch.worker';
-import { BATCH_QUEUE, BATCH_WEBHOOK_QUEUE } from '../queue/queue.constants';
+import { BatchResultService } from '../queue/batch-result.service';
+import {
+  BATCH_QUEUE,
+  BATCH_WEBHOOK_QUEUE,
+  BATCH_RESULT_QUEUE,
+} from '../queue/queue.constants';
 
 @Module({
   imports: [PrismaModule, CacheModule, ProviderModule],
   providers: [
+    {
+      provide: BATCH_RESULT_QUEUE,
+      useFactory: (config: ConfigService) =>
+        new Queue('batch-result', { connection: parseRedisConnection(config) }),
+      inject: [ConfigService],
+    },
     {
       provide: BATCH_QUEUE,
       useFactory: (config: ConfigService) =>
@@ -27,6 +38,7 @@ import { BATCH_QUEUE, BATCH_WEBHOOK_QUEUE } from '../queue/queue.constants';
       inject: [ConfigService],
     },
     BatchWorker,
+    BatchResultService,
     BatchWebhookWorker,
   ],
 })
